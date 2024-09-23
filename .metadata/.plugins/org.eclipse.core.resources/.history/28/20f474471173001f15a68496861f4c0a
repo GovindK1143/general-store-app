@@ -1,0 +1,5 @@
+spring:
+  application:
+    name: 01_Service_Registry
+server:
+  port: 8761

@@ -1,0 +1,5 @@
+package com.govind.client;
+
+public interface WelcomeFeignClient {
+
+}

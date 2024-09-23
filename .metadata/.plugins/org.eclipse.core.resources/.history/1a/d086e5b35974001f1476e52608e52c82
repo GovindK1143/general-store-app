@@ -1,0 +1,9 @@
+spring:
+  application:
+    name: 04_Welcome_Service
+  boot:
+    admin:
+      client:
+        url: http://localhost:1111/
+server:
+  port: 8081

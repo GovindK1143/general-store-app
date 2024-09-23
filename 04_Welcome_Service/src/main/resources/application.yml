@@ -1,0 +1,14 @@
+spring:
+  application:
+    name: WELCOME-SERVICE
+  boot:
+    admin:
+      client:
+        url: http://localhost:1111/
+management:
+  endpoints:
+    web:
+      exposure:
+        include: '*'
+server:
+  port: 8081
