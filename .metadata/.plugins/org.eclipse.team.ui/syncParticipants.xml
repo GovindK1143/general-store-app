@@ -10,7 +10,6 @@
 </mappings>
 </org.eclipse.team.ui.MODEL_PARTICIPANT_MAPPINGS>
 </org.eclipse.team.ui.MODEL_PARTICIPANT_SETTINGS>
-<gitSynchronizeData container="D:/Study Videos/RealTime Project-Ahok-IT/JRTP Practice/git-practice/SpringBoot_Gradle_APP" dstRev="refs/remotes/origin/main" inludeLocal="true" srcRev="HEAD"/>
 </data>
 </participant>
 </syncparticipants>
