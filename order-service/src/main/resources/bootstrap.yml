@@ -3,6 +3,14 @@ spring:
     name: order-service
   config:
     import: optional:configserver:http://localhost:8888
+  kafka:
+    bootstrap-servers:
+      - localhost:9092
+    consumer:
+      group-id: order-group
+      auto-offset-reset: earliest
+    producer:
+      retries: 3
 
 jwt:
-  secret: mysecretmysecretmysecretmysecret
+  secret: mysupersecretkeywhichislongenough

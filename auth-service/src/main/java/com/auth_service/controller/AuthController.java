@@ -3,7 +3,9 @@ package com.auth_service.controller;
 import java.util.HashMap;
 import java.util.Map;
 
+import org.apache.hc.core5.http.HttpStatus;
 import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.http.ResponseEntity;
 import org.springframework.security.crypto.password.PasswordEncoder;
 import org.springframework.web.bind.annotation.PostMapping;
 import org.springframework.web.bind.annotation.RequestBody;
@@ -12,22 +14,18 @@ import org.springframework.web.bind.annotation.RestController;
 
 import com.auth_service.login.LoginRequest;
 import com.auth_service.model.User;
-import com.auth_service.repository.UserRepository;
-import com.auth_service.security.JwtUt;
+import com.auth_service.security.JwtUtil;
 import com.auth_service.service.AuthService;
 
 @RestController
 @RequestMapping("/auth")
 public class AuthController {
-	
+    
     @Autowired
     private AuthService authService;
     
     @Autowired
-    private UserRepository userRepository;
-
-    @Autowired
-    private JwtUt JwtUt;
+    private JwtUtil jwtUtil;
 
     @Autowired
     private PasswordEncoder passwordEncoder;
@@ -43,17 +41,23 @@ public class AuthController {
     }
 
     @PostMapping("/login")
-    public Map<String, String> login(@RequestBody LoginRequest loginRequest) {
-        User user = userRepository.findByEmail(loginRequest.getEmail());
-        
-        if (user == null || !passwordEncoder.matches(loginRequest.getPassword(), user.getPassword())) {
-            throw new RuntimeException("Invalid credentials");
+    public ResponseEntity<?> login(@RequestBody LoginRequest loginRequest) {
+        User user = authService.authenticate(loginRequest.getEmail(), loginRequest.getPassword());
+        if (user == null) {
+            return ResponseEntity.status(HttpStatus.SC_UNAUTHORIZED).body(Map.of("error", "Invalid credentials"));
         }
 
-        String token = JwtUt.generateToken(user.getEmail(), user.getRole().name());
+        String token = jwtUtil.generateToken(user.getEmail(), user.getRole().name());
 
-        Map<String, String> response = new HashMap<>();
+        Map<String, Object> response = new HashMap<>();
         response.put("token", token);
-        return response;
+        response.put("userId", user.getId());
+        response.put("name", user.getName());
+        response.put("email", user.getEmail());
+        response.put("role", user.getRole());
+
+        return ResponseEntity.ok(response);
     }
 }
+
+

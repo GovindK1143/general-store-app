@@ -1,52 +1,59 @@
 package com.paymentservice.service;
-
 import java.time.LocalDateTime;
-import java.util.UUID;
+import java.util.Optional;
 
 import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.kafka.core.KafkaTemplate;
 import org.springframework.stereotype.Service;
 
 import com.paymentservice.model.Payment;
+import com.paymentservice.model.PaymentStatusMessage;
 import com.paymentservice.repository.PaymentRepository;
 
-import jakarta.transaction.Transactional;
+import lombok.extern.slf4j.Slf4j;
 
 @Service
+@Slf4j
 public class PaymentService {
     @Autowired
     private PaymentRepository paymentRepository;
+    
+    @Autowired
+    private KafkaTemplate<String, Object> kafkaTemplate;
 
-    @Transactional // ✅ Ensures transaction commits before returning
+    private static final String PAYMENT_STATUS_TOPIC = "payment.status.topic";
+
+
     public Payment processPayment(Payment payment) {
-        if (payment.getAmount() == 0) {
-            throw new RuntimeException("Amount is missing for Order ID: " + payment.getOrderId());
+        log.info("📌 Processing payment for Order ID: {}", payment.getOrderId());
+
+        // Prevent duplicate payments
+        Optional<Payment> existingPayment = paymentRepository.findByOrderId(payment.getOrderId());
+        if (existingPayment.isPresent() && "SUCCESS".equals(existingPayment.get().getPaymentStatus())) {
+            log.warn("⚠️ Payment already processed for Order ID: {}", payment.getOrderId());
+            throw new RuntimeException("Duplicate payment attempt detected");
         }
 
         payment.setPaymentStatus("SUCCESS");
-        payment.setTransactionId(UUID.randomUUID().toString());
+        payment.setTransactionId("TXN-" + System.currentTimeMillis());
         payment.setPaymentDate(LocalDateTime.now());
 
-        return paymentRepository.save(payment);
-    }
+        paymentRepository.save(payment);
+        kafkaTemplate.send(PAYMENT_STATUS_TOPIC, new PaymentStatusMessage(payment.getOrderId(), "SUCCESS", payment.getTransactionId()));
 
+        return payment;
+    }
+    
     public Payment createPendingPayment(Payment payment) {
-        Payment existingPayment = paymentRepository.findByOrderId(payment.getOrderId());
-
-        if (existingPayment != null) {
-            return existingPayment; // Return existing pending payment
-        }
-
-        payment.setPaymentStatus("PENDING");
-        payment.setTransactionId(null);
-        payment.setPaymentDate(LocalDateTime.now());
-
-        return paymentRepository.save(payment); // ✅ Save in PAYMENT-SERVICE DB
+        return paymentRepository.findByOrderId(payment.getOrderId()).orElseGet(() -> {
+            payment.setPaymentStatus("PENDING");
+            payment.setPaymentDate(LocalDateTime.now());
+            return paymentRepository.save(payment);
+        });
     }
-
 
     public Payment getPaymentByOrderId(Long orderId) {
-        return paymentRepository.findByOrderId(orderId);
+        return paymentRepository.findByOrderId(orderId).orElse(null);
     }
 }
-
 

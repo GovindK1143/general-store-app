@@ -3,3 +3,11 @@ spring:
     name: payment-service
   config:
     import: optional:configserver:http://localhost:8888
+  kafka:
+    bootstrap-servers:
+      - localhost:9092
+    consumer:
+      group-id: payment-group
+      auto-offset-reset: earliest
+    producer:
+      retries: 3

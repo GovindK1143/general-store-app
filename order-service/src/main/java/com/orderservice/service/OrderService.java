@@ -7,97 +7,67 @@ import java.util.Map;
 import java.util.Optional;
 
 import org.springframework.beans.factory.annotation.Autowired;
-import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
-import org.springframework.scheduling.annotation.Scheduled;
 import org.springframework.stereotype.Service;
-import org.springframework.web.client.RestTemplate;
 
+import com.orderservice.client.PaymentServiceClient;
+import com.orderservice.client.ProductServiceClient;
 import com.orderservice.model.Order;
 import com.orderservice.model.Payment;
 import com.orderservice.repository.OrderRepository;
 import com.orderservice.repository.PaymentRepository;
 
 import io.github.resilience4j.circuitbreaker.annotation.CircuitBreaker;
-import jakarta.transaction.Transactional;
+import lombok.extern.slf4j.Slf4j;
 
 @Service
+@Slf4j
 public class OrderService {
     @Autowired
     private OrderRepository orderRepository;
 
     @Autowired
     private PaymentRepository paymentRepository;
-
+    
     @Autowired
-    private RestTemplate restTemplate;
+    private PaymentServiceClient paymentServiceClient;
+    
+    @Autowired
+    private ProductServiceClient productServiceClient;
 
+    private static final String PAYMENT_STATUS_TOPIC = "payment.status.topic";
     private static final String PAYMENT_SERVICE_CB = "paymentServiceCB";
     
-    
-    @Transactional
-    @Scheduled(fixedRate = 30000) // Every 30 seconds
-    public void retryPendingPayments() {
-        List<Payment> pendingPayments = paymentRepository.findByPaymentStatus("PENDING");
-
-        for (Payment payment : pendingPayments) {
-            System.out.println("🔄 Retrying payment for Order ID: " + payment.getOrderId());
-
-            String paymentStatus = getPaymentStatusFromPaymentService(payment.getOrderId());
-
-            if ("SUCCESS".equals(paymentStatus)) {
-                System.out.println("✅ Payment already SUCCESS for Order ID: " + payment.getOrderId() + ". Updating Order DB.");
-
-                // 🔹 Update Order DB with latest success status
-                payment.setPaymentStatus("SUCCESS");
-                payment.setTransactionId(getTransactionIdFromPaymentService(payment.getOrderId())); // ✅ Fetch latest transaction ID
-                paymentRepository.save(payment);
-
-                continue; // ✅ Stop retrying for this order
-            }
-
-            try {
-                processPayment(payment.getOrderId());
-            } catch (Exception e) {
-                System.out.println("⚠️ Payment retry failed for Order ID: " + payment.getOrderId());
-            }
-        }
+    // ✅ Fetch All Orders
+    public List<Order> getAllOrders() {
+        log.info("📌 Fetching all orders...");
+        return orderRepository.findAll();
     }
 
-    
-    private String getTransactionIdFromPaymentService(Long orderId) {
-    	try {
-            String url = "http://PAYMENT-SERVICE/payments/order/" + orderId;
-            ResponseEntity<Payment> response = restTemplate.getForEntity(url, Payment.class);
-
-            if (response.getStatusCode() == HttpStatus.OK && response.getBody() != null) {
-                return response.getBody().getTransactionId(); // ✅ Fetch latest transaction ID
-            }
-        } catch (Exception e) {
-            System.out.println("⚠️ Error fetching transaction ID: " + e.getMessage());
-        }
-        return "UNKNOWN"; // Default if error occurs
+    // ✅ Fetch Orders by User ID
+    public List<Order> getOrdersByUserId(Long userId) {
+        log.info("📌 Fetching orders for User ID: {}", userId);
+        return orderRepository.findByUserId(userId);
     }
 
+    // ✅ Fetch Order Details with Payment Info
+    public Map<String, Object> getOrderWithPayment(Long orderId) {
+        log.info("📌 Fetching order details for Order ID: {}", orderId);
 
-    // ✅ Fetch payment status from PAYMENT-SERVICE
-    private String getPaymentStatusFromPaymentService(Long orderId) {
-        try {
-            String url = "http://PAYMENT-SERVICE/payments/order/" + orderId;
-            ResponseEntity<Payment> response = restTemplate.getForEntity(url, Payment.class);
+        Order order = orderRepository.findById(orderId)
+                .orElseThrow(() -> new RuntimeException("Order not found for ID: " + orderId));
 
-            if (response.getStatusCode() == HttpStatus.OK && response.getBody() != null) {
-                return response.getBody().getPaymentStatus();
-            }
-        } catch (Exception e) {
-            System.out.println("⚠️ Error fetching payment status: " + e.getMessage());
-        }
-        return "PENDING"; // Default to PENDING if an error occurs
+        Optional<Payment> paymentOptional = paymentRepository.findByOrderId(orderId);
+
+        Map<String, Object> response = new HashMap<>();
+        response.put("order", order);
+        response.put("payment", paymentOptional.orElse(null));
+
+        log.info("✅ Retrieved order details: {}", response);
+        return response;
     }
 
-
-
-    // ✅ Place Order & Call Payment Service
+    // ✅ Place Order & Call Payment Service via Feign Client
     public ResponseEntity<Map<String, Object>> placeOrder(Order order) {
         order.setOrderDate(LocalDateTime.now());
         Order savedOrder = orderRepository.save(order);
@@ -106,25 +76,18 @@ public class OrderService {
         response.put("order", savedOrder);
 
         try {
-            // 🔹 Call Payment Service to process payment
+            // 🔹 Call Payment Service via Feign Client
             Map<String, Object> paymentResponse = processPayment(savedOrder.getId());
 
-            // ✅ Wait before first check to allow transaction to commit
-            Thread.sleep(2000); // 🔴 Increased delay to ensure PAYMENT-SERVICE transaction is completed
-
-            // ✅ Fetch payment status with retry
-            String paymentStatus = fetchPaymentStatusWithRetry(savedOrder.getId());
-
-            if ("SUCCESS".equalsIgnoreCase(paymentStatus)) {
-                savePaymentRecord(savedOrder.getId(), paymentResponse, "SUCCESS"); // ✅ Save SUCCESS directly
-                response.put("paymentStatus", "SUCCESS");
-            } else {
-                savePendingPayment(savedOrder.getId()); // ✅ Save as PENDING if still not success
+            if (paymentResponse == null) {
+                log.warn("⚠️ Payment Service did not return a valid response for Order ID: {}", savedOrder.getId());
+                savePendingPayment(savedOrder.getId());
                 response.put("paymentStatus", "PENDING");
+            } else {
+                response.put("paymentStatus", "PROCESSING");
             }
-
         } catch (Exception e) {
-            System.out.println("⚠️ Payment failed for Order " + savedOrder.getId());
+            log.error("⚠️ Payment processing failed for Order ID: {}", savedOrder.getId(), e);
             savePendingPayment(savedOrder.getId());
             response.put("paymentStatus", "PENDING");
         }
@@ -132,26 +95,7 @@ public class OrderService {
         return ResponseEntity.ok(response);
     }
 
-    private String fetchPaymentStatusWithRetry(Long orderId) throws InterruptedException {
-        int retryCount = 0;
-        String paymentStatus = "PENDING";
-
-        while (retryCount < 5) {
-            paymentStatus = getPaymentStatusFromPaymentService(orderId);
-
-            if ("SUCCESS".equalsIgnoreCase(paymentStatus)) {
-                break; // ✅ Exit loop if payment is successful
-            }
-
-            Thread.sleep(800); // 🔴 Increased delay to 800ms before retrying
-            retryCount++;
-        }
-
-        return paymentStatus;
-    }
-
-
-    // ✅ Call Payment Service with Circuit Breaker
+    // ✅ Feign Client Call with Circuit Breaker
     @CircuitBreaker(name = PAYMENT_SERVICE_CB, fallbackMethod = "paymentServiceFallback")
     public Map<String, Object> processPayment(Long orderId) {
         Map<String, Object> paymentRequest = new HashMap<>();
@@ -162,37 +106,65 @@ public class OrderService {
                 .orElseThrow(() -> new RuntimeException("Order not found"));
         paymentRequest.put("amount", order.getTotalPrice());
 
-        String paymentServiceUrl = "http://PAYMENT-SERVICE/payments/process";
-        Map<String, Object> paymentResponse = restTemplate.postForObject(paymentServiceUrl, paymentRequest, Map.class);
+        // 🔹 Call Payment Service via Feign Client
+        Map<String, Object> paymentResponse = paymentServiceClient.processPayment(paymentRequest);
+
+        if (paymentResponse == null) {
+            log.warn("⚠️ Payment Service returned null for Order ID: {}", orderId);
+            throw new RuntimeException("Payment Service did not respond properly");
+        }
 
         // ✅ Prevent duplicate stock updates
         if ("SUCCESS".equals(paymentResponse.get("paymentStatus"))) {
             Payment existingPayment = paymentRepository.findByOrderId(orderId).orElse(null);
             if (existingPayment == null || !"SUCCESS".equals(existingPayment.getPaymentStatus())) {
-                updateProductStock(order);  // ✅ Only update stock if first time
+                updateProductStock(order);
             }
-            savePaymentRecord(orderId, paymentResponse, "SUCCESS");
         }
 
         return paymentResponse;
     }
-    
+
+    // ✅ Circuit Breaker Fallback Method
+    public Map<String, Object> paymentServiceFallback(Long orderId, Exception ex) {
+        log.warn("⚠️ Payment Service is down. Setting Payment Status to PENDING for Order ID: {}", orderId);
+        savePendingPayment(orderId);
+
+        Map<String, Object> response = new HashMap<>();
+        response.put("orderId", orderId);
+        response.put("paymentStatus", "PENDING");
+        response.put("message", "Payment Service is unavailable. Please retry later.");
+        return response;
+    }
+
     private void updateProductStock(Order order) {
         Map<String, Object> stockUpdateRequest = new HashMap<>();
         stockUpdateRequest.put("productId", order.getProductId());
         stockUpdateRequest.put("quantity", order.getQuantity());
 
-        String productServiceUrl = "http://PRODUCT-SERVICE/products/update-stock";
-        restTemplate.postForObject(productServiceUrl, stockUpdateRequest, Void.class);
+        try {
+            // 🔐 Fetch the JWT token from SecurityContext
+            String jwtToken = extractJwtFromSecurityContext();
 
-        System.out.println("✅ Stock updated for Product ID: " + order.getProductId());
+            // Pass the token to the Feign client
+            productServiceClient.updateProductStock(stockUpdateRequest);
+            log.info("✅ Stock updated for Product ID: {}", order.getProductId());
+        } catch (Exception e) {
+            log.error("⚠️ Failed to update stock for Product ID: {}", order.getProductId(), e);
+        }
+    }
+    private String extractJwtFromSecurityContext() {
+        org.springframework.security.core.context.SecurityContext context =
+            org.springframework.security.core.context.SecurityContextHolder.getContext();
+
+        if (context.getAuthentication() != null &&
+            context.getAuthentication().getCredentials() instanceof String) {
+            return context.getAuthentication().getCredentials().toString();
+        }
+
+        throw new RuntimeException("JWT token not found in security context");
     }
 
-    // ✅ Fallback Method: If Payment Service Fails
-    public void paymentServiceFallback(Long orderId, Exception ex) {
-        System.out.println("⚠️ Payment Service is down. Setting Payment Status to PENDING.");
-        savePendingPayment(orderId);
-    }
 
     // ✅ Save "PENDING" Payment to ORDER-SERVICE DB
     private void savePendingPayment(Long orderId) {
@@ -201,88 +173,11 @@ public class OrderService {
 
         Payment pendingPayment = new Payment();
         pendingPayment.setOrderId(order.getId());
-        pendingPayment.setAmount(order.getTotalPrice());  // ✅ Set correct amount
+        pendingPayment.setAmount(order.getTotalPrice());
         pendingPayment.setPaymentStatus("PENDING");
         pendingPayment.setTransactionId(null);
         pendingPayment.setPaymentDate(LocalDateTime.now());
 
-        paymentRepository.save(pendingPayment);  // ✅ Fixed: Now paymentRepository is correctly initialized
+        paymentRepository.save(pendingPayment);
     }
-
-    // ✅ Fetch All Orders
-    public List<Order> getAllOrders() {
-        return orderRepository.findAll();
-    }
-
-    // ✅ Fetch Orders by User ID
-    public List<Order> getOrdersByUserId(Long userId) {
-        return orderRepository.findByUserId(userId);
-    }
-
-    // ✅ Fetch Order with Payment Details
-    public Map<String, Object> getOrderWithPayment(Long orderId) {
-        Order order = orderRepository.findById(orderId)
-                .orElseThrow(() -> new RuntimeException("Order not found"));
-
-        // Call Payment Service to get payment details
-        String paymentServiceUrl = "http://PAYMENT-SERVICE/payments/order/" + orderId;
-        Map<String, Object> paymentDetails = restTemplate.getForObject(paymentServiceUrl, Map.class);
-
-        // ✅ Combine Order & Payment Details
-        Map<String, Object> response = new HashMap<>();
-        response.put("order", order);
-        response.put("payment", paymentDetails);
-
-        return response;
-    }
-    
-    private void savePaymentRecord(Long orderId, Map<String, Object> paymentResponse, String status) {
-        Payment payment = paymentRepository.findByOrderId(orderId).orElse(null);
-
-        if (payment == null) {
-            payment = new Payment();
-            payment.setOrderId(orderId);
-        }
-        
-        payment.setAmount(Double.parseDouble(paymentResponse.get("amount").toString()));
-        payment.setPaymentStatus(status);
-        payment.setPaymentDate(LocalDateTime.now());
-
-        if ("SUCCESS".equals(status)) {
-            payment.setTransactionId(paymentResponse.get("transactionId").toString()); // ✅ Update Transaction ID
-        }
-
-        paymentRepository.save(payment);
-        System.out.println("✅ Payment status updated: Order " + orderId + " → " + status);
-    }
-
-
-
-
-    public ResponseEntity<Map<String, Object>> retryPendingPayment(Long orderId) {
-        Order order = orderRepository.findById(orderId)
-                .orElseThrow(() -> new RuntimeException("Order not found"));
-
-        Optional<Payment> pendingPayment = paymentRepository.findByOrderId(orderId);
-        
-        // ✅ Fix: Checking null instead of isEmpty()
-        if (pendingPayment == null || !"PENDING".equals(pendingPayment.get().getPaymentStatus())) {
-            throw new RuntimeException("No pending payment found for Order ID: " + orderId);
-        }
-
-        Map<String, Object> response = new HashMap<>();
-        response.put("order", order);
-
-        try {
-            // ✅ Calling PAYMENT-SERVICE for retry
-            processPayment(orderId);
-            response.put("paymentStatus", "SUCCESS");
-        } catch (Exception e) {
-            System.out.println("⚠️ Payment retry failed for Order ID: " + orderId);
-            response.put("paymentStatus", "PENDING");
-        }
-
-        return ResponseEntity.ok(response);
-    }
-
 }

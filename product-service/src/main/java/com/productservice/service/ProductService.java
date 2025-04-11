@@ -28,13 +28,18 @@ public class ProductService {
         Product product = productRepository.findById(productId)
                 .orElseThrow(() -> new RuntimeException("Product not found"));
 
-        if (product.getStock() >= quantity) {
-            product.setStock(product.getStock() - quantity); // ✅ Reduce stock
-            productRepository.save(product);
-        } else {
+        if (quantity <= 0) {
+            throw new IllegalArgumentException("Quantity must be greater than zero");
+        }
+
+        if (product.getStock() < quantity) {
             throw new RuntimeException("Insufficient stock");
         }
+
+        product.setStock(product.getStock() - quantity); // ✅ Reduce stock
+        productRepository.save(product);
     }
+
 
 
 }
