@@ -24,7 +24,7 @@ public class SecurityConfig {
             .authorizeHttpRequests(auth -> auth
                 .requestMatchers("/products/all", "/products/{category}").permitAll()
                 .requestMatchers("/products/add").authenticated()
-                .requestMatchers("/products/update-stock").authenticated()
+                .requestMatchers("/products/update-stock", "/products/id/**").authenticated()
             )
             .sessionManagement(session -> session.sessionCreationPolicy(SessionCreationPolicy.STATELESS))
             .addFilterBefore(jwtAuthFilter, UsernamePasswordAuthenticationFilter.class);

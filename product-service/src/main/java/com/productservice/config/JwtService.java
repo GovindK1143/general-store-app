@@ -9,7 +9,7 @@ import java.util.Date;
 @Service
 public class JwtService {
 
-    private final String SECRET_KEY = "my-super-secret-key-which-is-long-enough"; // Use environment variable in real apps
+    private final String SECRET_KEY = "mysupersecretkeywhichislongenough"; // Use environment variable in real apps
 
     public String extractUsername(String token) {
         return extractAllClaims(token).getSubject();

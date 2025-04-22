@@ -24,6 +24,12 @@ public class ProductController {
     public Product addProduct(@RequestBody Product product) {
         return productService.addProduct(product);
     }
+    
+    @GetMapping("/id/{productId}")
+    public ResponseEntity<Product> getProductById(@PathVariable Long productId) {
+        Product product = productService.getProductById(productId);
+        return ResponseEntity.ok(product);
+    }
 
     @GetMapping("/all")
     public List<Product> getAllProducts() {

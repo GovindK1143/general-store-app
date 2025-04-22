@@ -12,6 +12,8 @@ import org.springframework.stereotype.Service;
 
 import com.orderservice.client.PaymentServiceClient;
 import com.orderservice.client.ProductServiceClient;
+import com.orderservice.dto.OrderStatusResponse;
+import com.orderservice.dto.ProductResponse;
 import com.orderservice.model.Order;
 import com.orderservice.model.Payment;
 import com.orderservice.repository.OrderRepository;
@@ -67,33 +69,44 @@ public class OrderService {
         return response;
     }
 
-    // ✅ Place Order & Call Payment Service via Feign Client
     public ResponseEntity<Map<String, Object>> placeOrder(Order order) {
+        // 🔹 Fetch product details
+        ProductResponse product = productServiceClient.getProductById(order.getProductId());
+        if (product == null) {
+            throw new RuntimeException("Product not found with ID: " + order.getProductId());
+        }
+
+        // 🔹 Calculate price
+        double totalPrice = product.getPrice() * order.getQuantity();
+        order.setTotalPrice(totalPrice);
         order.setOrderDate(LocalDateTime.now());
+
+        // 🔹 Save order
         Order savedOrder = orderRepository.save(order);
 
+        // 🔹 Initialize response
         Map<String, Object> response = new HashMap<>();
         response.put("order", savedOrder);
 
         try {
-            // 🔹 Call Payment Service via Feign Client
             Map<String, Object> paymentResponse = processPayment(savedOrder.getId());
 
             if (paymentResponse == null) {
-                log.warn("⚠️ Payment Service did not return a valid response for Order ID: {}", savedOrder.getId());
                 savePendingPayment(savedOrder.getId());
-                response.put("paymentStatus", "PENDING");
-            } else {
-                response.put("paymentStatus", "PROCESSING");
             }
         } catch (Exception e) {
-            log.error("⚠️ Payment processing failed for Order ID: {}", savedOrder.getId(), e);
             savePendingPayment(savedOrder.getId());
-            response.put("paymentStatus", "PENDING");
         }
+
+        // 🔁 ✅ Check if payment is already processed after Kafka event
+        Payment payment = paymentRepository.findByOrderId(savedOrder.getId()).orElse(null);
+        String finalStatus = payment != null ? payment.getPaymentStatus() : "PROCESSING";
+        response.put("paymentStatus", finalStatus);
 
         return ResponseEntity.ok(response);
     }
+
+
 
     // ✅ Feign Client Call with Circuit Breaker
     @CircuitBreaker(name = PAYMENT_SERVICE_CB, fallbackMethod = "paymentServiceFallback")
@@ -180,4 +193,25 @@ public class OrderService {
 
         paymentRepository.save(pendingPayment);
     }
+    
+    public OrderStatusResponse getOrderStatus(Long orderId) {
+        Order order = orderRepository.findById(orderId)
+            .orElseThrow(() -> new RuntimeException("Order not found"));
+
+        Payment payment = paymentRepository.findByOrderId(orderId)
+            .orElse(null); // if payment not yet processed
+
+        return OrderStatusResponse.builder()
+            .orderId(order.getId())
+            .userId(order.getUserId())
+            .productId(order.getProductId())
+            .quantity(order.getQuantity())
+            .totalPrice(order.getTotalPrice())
+            .orderDate(order.getOrderDate())
+            .paymentStatus(payment != null ? payment.getPaymentStatus() : "PROCESSING")
+            .transactionId(payment != null ? payment.getTransactionId() : null)
+            .paymentDate(payment != null ? payment.getPaymentDate() : null)
+            .build();
+    }
+
 }

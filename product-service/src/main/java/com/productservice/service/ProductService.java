@@ -24,6 +24,12 @@ public class ProductService {
         return productRepository.findByCategory(category);
     }
     
+    public Product getProductById(Long productId) {
+        return productRepository.findById(productId)
+            .orElseThrow(() -> new RuntimeException("Product not found with ID: " + productId));
+    }
+
+    
     public void updateStock(Long productId, int quantity) {
         Product product = productRepository.findById(productId)
                 .orElseThrow(() -> new RuntimeException("Product not found"));

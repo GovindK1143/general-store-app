@@ -21,21 +21,22 @@ public class FeignClientConfig {
     @Bean
     public RequestInterceptor requestInterceptor() {
         return requestTemplate -> {
-            String token = generateServiceToken();
-            requestTemplate.header("Authorization", "Bearer " + token);
+            String jwtToken = extractJwtFromSecurityContext(); // Use user's token
+            requestTemplate.header("Authorization", "Bearer " + jwtToken);
         };
     }
 
-    private String generateServiceToken() {
-        Key secretKey = Keys.hmacShaKeyFor(secretKeyString.getBytes(StandardCharsets.UTF_8));
+    private String extractJwtFromSecurityContext() {
+        org.springframework.security.core.context.SecurityContext context =
+                org.springframework.security.core.context.SecurityContextHolder.getContext();
 
-        return Jwts.builder()
-                .setSubject("order-service")
-                .claim("role", "SERVICE")
-                .setIssuedAt(new Date())
-                .setExpiration(new Date(System.currentTimeMillis() + 600_000))
-                .signWith(secretKey, SignatureAlgorithm.HS256)
-                .compact();
+        if (context.getAuthentication() != null &&
+            context.getAuthentication().getCredentials() instanceof String) {
+            return context.getAuthentication().getCredentials().toString();
+        }
+
+        throw new RuntimeException("JWT token not found in security context");
     }
+
 }
 

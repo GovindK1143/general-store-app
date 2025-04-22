@@ -13,6 +13,7 @@ import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RestController;
 
+import com.orderservice.dto.OrderStatusResponse;
 import com.orderservice.model.Order;
 import com.orderservice.service.OrderService;
 
@@ -51,12 +52,9 @@ public class OrderController {
         return ResponseEntity.ok(userOrders);
     }
 
-    @GetMapping("/{orderId}/details")
-    @PreAuthorize("hasRole('USER') or hasRole('ADMIN')")
-    public ResponseEntity<Map<String, Object>> getOrderWithPayment(@PathVariable Long orderId) {
-        log.info("📌 Fetching order details for Order ID: {}", orderId);
-        ResponseEntity<Map<String, Object>> response = ResponseEntity.ok(orderService.getOrderWithPayment(orderId));
-        log.info("✅ Order details retrieved: {}", response.getBody());
-        return response;
+    @GetMapping("/{id}/status")
+    public ResponseEntity<OrderStatusResponse> getOrderStatus(@PathVariable Long id) {
+        OrderStatusResponse response = orderService.getOrderStatus(id);
+        return ResponseEntity.ok(response);
     }
 }

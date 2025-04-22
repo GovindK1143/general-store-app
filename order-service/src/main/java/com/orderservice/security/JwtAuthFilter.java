@@ -70,9 +70,10 @@ public class JwtAuthFilter extends OncePerRequestFilter {
                     .roles(role)
                     .build();
 
-            SecurityContextHolder.getContext().setAuthentication(
-                    new UsernamePasswordAuthenticationToken(userDetails, null, userDetails.getAuthorities())
-            );
+            UsernamePasswordAuthenticationToken authToken = 
+            	    new UsernamePasswordAuthenticationToken(userDetails, token, userDetails.getAuthorities());
+
+            	SecurityContextHolder.getContext().setAuthentication(authToken);
 
         } catch (Exception ex) {
             logger.error("JWT validation error: {}", ex.getMessage());
