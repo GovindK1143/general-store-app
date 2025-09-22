@@ -38,5 +38,14 @@ public class AuthService {
         }
         return null;
     }
+    
+    public User authenticateByMobile(String mobile, String password) {
+        Optional<User> userOpt = userRepository.findByMobile(mobile);
+        if (userOpt.isPresent() && passwordEncoder.matches(password, userOpt.get().getPassword())) {
+            return userOpt.get();
+        }
+        return null;
+    }
+
 }
 
