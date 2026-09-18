@@ -1,8 +1,10 @@
 package com.userservice.security;
 
 import java.io.IOException;
+import java.nio.charset.StandardCharsets;
 import java.util.List;
 
+import org.springframework.beans.factory.annotation.Value;
 import org.springframework.security.authentication.UsernamePasswordAuthenticationToken;
 import org.springframework.security.core.authority.SimpleGrantedAuthority;
 import org.springframework.security.core.context.SecurityContextHolder;
@@ -21,37 +23,95 @@ import jakarta.servlet.http.HttpServletResponse;
 
 @Component
 public class JwtAuthFilter extends OncePerRequestFilter {
-    
-    private static final String SECRET_KEY = "mysecretmysecretmysecretmysecret"; // Same as AUTH-SERVICE
+
+    @Value("${jwt.secret}")
+    private String secretKey;
 
     @Override
-    protected void doFilterInternal(HttpServletRequest request, HttpServletResponse response, FilterChain filterChain)
+    protected void doFilterInternal(
+            HttpServletRequest request,
+            HttpServletResponse response,
+            FilterChain filterChain)
             throws ServletException, IOException {
-        
+
         String authHeader = request.getHeader("Authorization");
 
-        if (authHeader == null || !authHeader.startsWith("Bearer ")) {
+        if (authHeader == null ||
+                !authHeader.startsWith("Bearer ")) {
+
             filterChain.doFilter(request, response);
             return;
         }
 
         String token = authHeader.substring(7);
-        Claims claims = Jwts.parserBuilder()
-                .setSigningKey(Keys.hmacShaKeyFor(SECRET_KEY.getBytes()))
-                .build()
-                .parseClaimsJws(token)
-                .getBody();
 
-        String email = claims.getSubject();
-        String role = claims.get("role", String.class);
+        try {
 
-        if (email != null && SecurityContextHolder.getContext().getAuthentication() == null) {
-        	UserDetails userDetails = new org.springframework.security.core.userdetails.User(
-        	        email, "", List.of(new SimpleGrantedAuthority(role))); // Create user with role	
-        	UsernamePasswordAuthenticationToken auth = new UsernamePasswordAuthenticationToken(userDetails, null, userDetails.getAuthorities());
-            auth.setDetails(new WebAuthenticationDetailsSource().buildDetails(request));
+            Claims claims = Jwts.parserBuilder()
+                    .setSigningKey(
+                            Keys.hmacShaKeyFor(
+                                    secretKey.getBytes(
+                                            StandardCharsets.UTF_8
+                                    )
+                            )
+                    )
+                    .build()
+                    .parseClaimsJws(token)
+                    .getBody();
 
-            SecurityContextHolder.getContext().setAuthentication(auth);
+            String email = claims.getSubject();
+            String role = claims.get("role", String.class);
+
+            if (email != null &&
+                    SecurityContextHolder
+                            .getContext()
+                            .getAuthentication() == null) {
+
+                UserDetails userDetails =
+                        new org.springframework.security.core.userdetails.User(
+                                email,
+                                "",
+                                List.of(
+                                        new SimpleGrantedAuthority(
+                                                "ROLE_" + role
+                                        )
+                                )
+                        );
+
+                UsernamePasswordAuthenticationToken authentication =
+                        new UsernamePasswordAuthenticationToken(
+                                userDetails,
+                                null,
+                                userDetails.getAuthorities()
+                        );
+
+                authentication.setDetails(
+                        new WebAuthenticationDetailsSource()
+                                .buildDetails(request)
+                );
+
+                SecurityContextHolder.getContext()
+                        .setAuthentication(authentication);
+            }
+
+        } catch (Exception exception) {
+
+            // Invalid/expired JWT
+            response.setStatus(
+                    HttpServletResponse.SC_UNAUTHORIZED
+            );
+            response.setContentType("application/json");
+
+            response.getWriter().write(
+                    """
+                    {
+                        "success": false,
+                        "message": "Invalid or expired token"
+                    }
+                    """
+            );
+
+            return;
         }
 
         filterChain.doFilter(request, response);

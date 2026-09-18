@@ -1,14 +1,18 @@
 package com.auth_service.security;
 
-import io.jsonwebtoken.*;
-import io.jsonwebtoken.security.Keys;
+import java.nio.charset.StandardCharsets;
+import java.security.Key;
+import java.util.Date;
+
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Component;
 
-import java.nio.charset.StandardCharsets;
-import java.security.Key;
-import java.util.Base64;
-import java.util.Date;
+import com.auth_service.model.User;
+
+import io.jsonwebtoken.Claims;
+import io.jsonwebtoken.Jwts;
+import io.jsonwebtoken.SignatureAlgorithm;
+import io.jsonwebtoken.security.Keys;
 
 @Component
 public class JwtUtil {
@@ -16,23 +20,38 @@ public class JwtUtil {
     @Value("${jwt.secret}")
     private String secretKeyString;
 
+    private static final long EXPIRATION_TIME =
+            10 * 60 * 60 * 1000L;
+
     private Key getSigningKey() {
-        return Keys.hmacShaKeyFor(secretKeyString.getBytes(StandardCharsets.UTF_8));
+
+        return Keys.hmacShaKeyFor(
+                secretKeyString.getBytes(StandardCharsets.UTF_8)
+        );
     }
 
-    private static final long EXPIRATION_TIME = 10 * 60 * 60 * 1000;
+    public String generateToken(User user) {
 
-    public String generateToken(String email, String role) {
         return Jwts.builder()
-                .setSubject(email)
-                .claim("role", role)
+                .setSubject(user.getEmail())
+                .claim("userId", user.getId())
+                .claim("role", user.getRole().name())
                 .setIssuedAt(new Date())
-                .setExpiration(new Date(System.currentTimeMillis() + EXPIRATION_TIME))
-                .signWith(getSigningKey(), SignatureAlgorithm.HS256)
+                .setExpiration(
+                        new Date(
+                                System.currentTimeMillis()
+                                        + EXPIRATION_TIME
+                        )
+                )
+                .signWith(
+                        getSigningKey(),
+                        SignatureAlgorithm.HS256
+                )
                 .compact();
     }
 
     public Claims parseToken(String token) {
+
         return Jwts.parserBuilder()
                 .setSigningKey(getSigningKey())
                 .build()
@@ -45,11 +64,17 @@ public class JwtUtil {
     }
 
     public String extractRole(String token) {
-        return parseToken(token).get("role", String.class);
+        return parseToken(token)
+                .get("role", String.class);
     }
 
-    public String getEncodedSecretKey() {
-        return Base64.getEncoder().encodeToString(getSigningKey().getEncoded());
+    public Long extractUserId(String token) {
+
+        Number userId = parseToken(token)
+                .get("userId", Number.class);
+
+        return userId != null
+                ? userId.longValue()
+                : null;
     }
 }
-
