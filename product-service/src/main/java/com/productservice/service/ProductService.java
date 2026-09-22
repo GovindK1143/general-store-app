@@ -4,6 +4,14 @@ import java.util.List;
 
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Service;
+import java.util.ArrayList;
+import java.util.HashSet;
+import java.util.Set;
+
+import org.springframework.transaction.annotation.Transactional;
+
+import com.productservice.dto.StockUpdateBatchRequest;
+import com.productservice.dto.StockUpdateItem;
 
 import com.productservice.exception.InsufficientStockException;
 import com.productservice.exception.ProductNotFoundException;
@@ -421,5 +429,137 @@ public class ProductService {
 
             product.setActive(true);
         }
+    }
+
+    // =========================================================
+// BATCH UPDATE / REDUCE STOCK
+// =========================================================
+
+    @Transactional
+    public void updateStockBatch(
+            StockUpdateBatchRequest request) {
+
+        // -----------------------------------------------------
+        // Validate request
+        // -----------------------------------------------------
+
+        if (request == null ||
+                request.getItems() == null ||
+                request.getItems().isEmpty()) {
+
+            throw new IllegalArgumentException(
+                    "At least one stock update item is required"
+            );
+        }
+
+        // -----------------------------------------------------
+        // Prevent duplicate product IDs
+        // -----------------------------------------------------
+
+        Set<Long> productIds = new HashSet<>();
+
+        for (StockUpdateItem item : request.getItems()) {
+
+            if (item == null) {
+
+                throw new IllegalArgumentException(
+                        "Stock update item cannot be null"
+                );
+            }
+
+            if (item.getProductId() == null) {
+
+                throw new IllegalArgumentException(
+                        "Product ID is required"
+                );
+            }
+
+            if (item.getQuantity() == null ||
+                    item.getQuantity() <= 0) {
+
+                throw new IllegalArgumentException(
+                        "Quantity must be greater than zero " +
+                                "for product ID: " +
+                                item.getProductId()
+                );
+            }
+
+            if (!productIds.add(item.getProductId())) {
+
+                throw new IllegalArgumentException(
+                        "Duplicate product ID in stock update request: "
+                                + item.getProductId()
+                );
+            }
+        }
+
+        // -----------------------------------------------------
+        // IMPORTANT:
+        // First validate ALL products and stock.
+        // Do not reduce any stock yet.
+        // -----------------------------------------------------
+
+        List<Product> productsToUpdate =
+                new ArrayList<>();
+
+        for (StockUpdateItem item : request.getItems()) {
+
+            Product product =
+                    productRepository.findById(
+                            item.getProductId()
+                    ).orElseThrow(() ->
+                            new ProductNotFoundException(
+                                    "Product not found with ID: "
+                                            + item.getProductId()
+                            )
+                    );
+
+            if (!Boolean.TRUE.equals(product.getActive())) {
+
+                throw new ProductNotFoundException(
+                        "Product is currently unavailable: "
+                                + item.getProductId()
+                );
+            }
+
+            if (product.getStock() < item.getQuantity()) {
+
+                throw new InsufficientStockException(
+                        "Insufficient stock for product ID: "
+                                + item.getProductId()
+                                + ". Available stock: "
+                                + product.getStock()
+                );
+            }
+
+            productsToUpdate.add(product);
+        }
+
+        // -----------------------------------------------------
+        // ALL products passed validation.
+        // Now reduce stock.
+        // -----------------------------------------------------
+
+        for (int i = 0;
+             i < request.getItems().size();
+             i++) {
+
+            StockUpdateItem item =
+                    request.getItems().get(i);
+
+            Product product =
+                    productsToUpdate.get(i);
+
+            product.setStock(
+                    product.getStock()
+                            - item.getQuantity()
+            );
+        }
+
+        // -----------------------------------------------------
+        // Save all updated products
+        // -----------------------------------------------------
+
+        productRepository.saveAll(productsToUpdate);
     }
 }

@@ -1,71 +1,142 @@
 package com.paymentservice.service;
 
 import java.time.LocalDateTime;
-import java.util.Optional;
+import java.util.UUID;
 
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.kafka.core.KafkaTemplate;
 import org.springframework.stereotype.Service;
+import org.springframework.transaction.annotation.Transactional;
 
+import com.paymentservice.dto.PaymentRequest;
+import com.paymentservice.dto.PaymentResponse;
 import com.paymentservice.model.Payment;
 import com.paymentservice.model.PaymentStatusMessage;
 import com.paymentservice.repository.PaymentRepository;
 
-import lombok.extern.slf4j.Slf4j;
-
 @Service
-@Slf4j
 public class PaymentService {
+
+    private static final String PAYMENT_STATUS_TOPIC = "payment.status.topic";
 
     @Autowired
     private PaymentRepository paymentRepository;
 
     @Autowired
-    private KafkaTemplate<String, Object> kafkaTemplate;
+    private KafkaTemplate<String, PaymentStatusMessage> kafkaTemplate;
 
-    private static final String PAYMENT_STATUS_TOPIC = "payment.status.topic";
+    @Transactional
+    public PaymentResponse processPayment(PaymentRequest request) {
 
-    public Payment processPayment(Payment payment) {
-        log.info("📌 Processing payment for Order ID: {}, Amount: {}", payment.getOrderId(), payment.getAmount());
+        /*
+         * Check whether a payment already exists for this order.
+         * This makes the payment operation idempotent.
+         */
+        Payment payment = paymentRepository.findByOrderId(request.getOrderId())
+                .orElse(null);
 
-        // Check for duplicate successful payments
-        Optional<Payment> existingPayment = paymentRepository.findByOrderId(payment.getOrderId());
-        if (existingPayment.isPresent() && "SUCCESS".equals(existingPayment.get().getPaymentStatus())) {
-            log.warn("⚠️ Payment already processed for Order ID: {}", payment.getOrderId());
-            throw new RuntimeException("Duplicate payment attempt detected");
+        /*
+         * If payment was already successful, don't create another payment.
+         */
+        if (payment != null && "SUCCESS".equalsIgnoreCase(payment.getPaymentStatus())) {
+
+            publishPaymentStatus(payment);
+
+            return PaymentResponse.fromPayment(payment);
         }
 
-        // Set payment details
-        payment.setPaymentStatus("SUCCESS");
-        payment.setTransactionId("TXN-" + System.currentTimeMillis());
-        payment.setPaymentDate(LocalDateTime.now());
+        /*
+         * Create a new payment or retry an existing pending/failed payment.
+         */
+        if (payment == null) {
 
-        // Save to payment_db
-        Payment savedPayment = paymentRepository.save(payment);
+            payment = new Payment();
 
-        // 🔥 Publish to Kafka (with correct amount)
-        PaymentStatusMessage message = new PaymentStatusMessage(
-            savedPayment.getOrderId(),
-            savedPayment.getPaymentStatus(),
-            savedPayment.getTransactionId(),
-            savedPayment.getAmount() // ✅ Make sure amount is populated
-        );
+            payment.setOrderId(request.getOrderId());
+            payment.setUserId(request.getUserId());
 
-        kafkaTemplate.send(PAYMENT_STATUS_TOPIC, message);
-        log.info("📤 Published payment status to Kafka: {}", message);
+        }
 
-        return savedPayment;
-    }
+        payment.setAmount(request.getAmount());
 
-    public Payment createPendingPayment(Payment payment) {
-        return paymentRepository.findByOrderId(payment.getOrderId()).orElseGet(() -> {
-            payment.setPaymentStatus("PENDING");
+        /*
+         * For now this is a mock/simulated payment.
+         *
+         * Later we can replace this section with:
+         * Razorpay / Stripe / PayU / payment gateway integration.
+         */
+        if (Boolean.TRUE.equals(request.getSimulateFailure())) {
+
+            payment.setPaymentStatus("FAILED");
+
+            payment.setTransactionId(null);
+
             payment.setPaymentDate(LocalDateTime.now());
-            return paymentRepository.save(payment);
-        });
+
+        } else {
+
+            payment.setPaymentStatus("SUCCESS");
+
+            payment.setTransactionId(generateTransactionId());
+
+            payment.setPaymentDate(LocalDateTime.now());
+        }
+
+        payment = paymentRepository.save(payment);
+
+        /*
+         * Notify Order Service through Kafka.
+         */
+        publishPaymentStatus(payment);
+
+        return PaymentResponse.fromPayment(payment);
     }
 
-    public Payment getPaymentByOrderId(Long orderId) {
-        return paymentRepository.findByOrderId(orderId).orElse(null);
+    public PaymentResponse getPaymentByOrderId(Long orderId) {
+
+        Payment payment = paymentRepository.findByOrderId(orderId)
+                .orElseThrow(() ->
+                        new RuntimeException(
+                                "Payment not found for order ID: " + orderId));
+
+        return PaymentResponse.fromPayment(payment);
+    }
+
+    public PaymentResponse getPaymentStatus(Long orderId) {
+
+        Payment payment = paymentRepository.findByOrderId(orderId)
+                .orElseThrow(() ->
+                        new RuntimeException(
+                                "Payment not found for order ID: " + orderId));
+
+        return PaymentResponse.fromPayment(payment);
+    }
+
+    private void publishPaymentStatus(Payment payment) {
+
+        PaymentStatusMessage message = new PaymentStatusMessage();
+
+        message.setOrderId(payment.getOrderId());
+        message.setUserId(payment.getUserId());
+        message.setAmount(payment.getAmount());
+        message.setPaymentStatus(payment.getPaymentStatus());
+        message.setTransactionId(payment.getTransactionId());
+        message.setPaymentDate(payment.getPaymentDate());
+
+        kafkaTemplate.send(
+                PAYMENT_STATUS_TOPIC,
+                String.valueOf(payment.getOrderId()),
+                message
+        );
+    }
+
+    private String generateTransactionId() {
+
+        return "TXN-" +
+                UUID.randomUUID()
+                        .toString()
+                        .replace("-", "")
+                        .substring(0, 16)
+                        .toUpperCase();
     }
 }

@@ -40,25 +40,34 @@ public class SecurityConfig {
                         ).hasAnyRole("CUSTOMER", "ADMIN")
 
 
-                        // ==========================================
-                        // ADMIN ONLY
-                        // ==========================================
+                                // ==========================================
+                                // ADMIN ONLY
+                            // ==========================================
 
-                        .requestMatchers(
-                                HttpMethod.POST,
-                                "/products/add",
-                                "/products/update-stock"
-                        ).hasRole("ADMIN")
+                                .requestMatchers(
+                                        HttpMethod.POST,
+                                        "/products/add"
+                                ).hasRole("ADMIN")
 
-                        .requestMatchers(
-                                HttpMethod.PUT,
-                                "/products/*"
-                        ).hasRole("ADMIN")
+                                .requestMatchers(
+                                        HttpMethod.POST,
+                                        "/products/update-stock"
+                                ).hasRole("ADMIN")
 
-                        .requestMatchers(
-                                HttpMethod.PATCH,
-                                "/products/*/status"
-                        ).hasRole("ADMIN")
+                                .requestMatchers(
+                                        HttpMethod.POST,
+                                        "/products/update-stock/batch"
+                                ).hasRole("ADMIN")
+
+                                .requestMatchers(
+                                        HttpMethod.PUT,
+                                        "/products/*"
+                                ).hasRole("ADMIN")
+
+                                .requestMatchers(
+                                        HttpMethod.PATCH,
+                                        "/products/*/status"
+                                ).hasRole("ADMIN")
 
 
                         // ==========================================

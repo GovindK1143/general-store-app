@@ -11,13 +11,19 @@ import org.springframework.web.bind.annotation.RequestBody;
 import com.orderservice.dto.ProductResponse;
 import com.orderservice.security.FeignClientConfig;
 
-@FeignClient(name = "PRODUCT-SERVICE", configuration = FeignClientConfig.class)
+@FeignClient(
+        name = "PRODUCT-SERVICE",
+        configuration = FeignClientConfig.class
+)
 public interface ProductServiceClient {
 
-    @PostMapping("/products/update-stock")
-    void updateProductStock(@RequestBody Map<String, Object> stockUpdateRequest);
-    
     @GetMapping("/products/id/{productId}")
-    ProductResponse getProductById(@PathVariable("productId") Long productId);
+    ProductResponse getProductById(
+            @PathVariable("productId") Long productId
+    );
 
+    @PostMapping("/products/update-stock/batch")
+    void updateProductStockBatch(
+            @RequestBody Map<String, Object> request
+    );
 }

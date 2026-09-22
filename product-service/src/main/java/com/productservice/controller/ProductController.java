@@ -9,6 +9,7 @@ import org.springframework.web.bind.annotation.*;
 
 import com.productservice.model.Product;
 import com.productservice.service.ProductService;
+import com.productservice.dto.StockUpdateBatchRequest;
 
 @RestController
 @RequestMapping("/products")
@@ -75,6 +76,17 @@ public class ProductController {
 
         return ResponseEntity.ok(
                 "Stock updated successfully"
+        );
+    }
+
+    @PostMapping("/update-stock/batch")
+    public ResponseEntity<String> updateStockBatch(
+            @RequestBody StockUpdateBatchRequest request) {
+
+        productService.updateStockBatch(request);
+
+        return ResponseEntity.ok(
+                "Stock updated successfully for all products"
         );
     }
 

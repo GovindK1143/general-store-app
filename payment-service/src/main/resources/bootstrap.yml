@@ -1,13 +1,19 @@
 spring:
   application:
     name: payment-service
+
   config:
     import: optional:configserver:http://localhost:8888
+
   kafka:
-    bootstrap-servers:
-      - localhost:9092
-    consumer:
-      group-id: payment-group
-      auto-offset-reset: earliest
+    bootstrap-servers: localhost:9092
+
     producer:
-      retries: 3
+      key-serializer: org.apache.kafka.common.serialization.StringSerializer
+      value-serializer: org.springframework.kafka.support.serializer.JsonSerializer
+
+      properties:
+        spring.json.add.type.headers: true
+
+jwt:
+  secret: mysupersecretkeywhichislongenough

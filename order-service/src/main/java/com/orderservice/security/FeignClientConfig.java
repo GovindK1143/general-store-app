@@ -1,42 +1,65 @@
 package com.orderservice.security;
 
 import feign.RequestInterceptor;
-import io.jsonwebtoken.Jwts;
-import io.jsonwebtoken.SignatureAlgorithm;
-import io.jsonwebtoken.security.Keys;
-import org.springframework.beans.factory.annotation.Value;
+import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
-
-import java.nio.charset.StandardCharsets;
-import java.security.Key;
-import java.util.Date;
+import org.springframework.security.core.Authentication;
+import org.springframework.security.core.context.SecurityContextHolder;
 
 @Configuration
 public class FeignClientConfig {
 
-    @Value("${jwt.secret}")
-    private String secretKeyString;
+    @Autowired
+    private ServiceJwtUtil serviceJwtUtil;
 
     @Bean
     public RequestInterceptor requestInterceptor() {
+
         return requestTemplate -> {
-            String jwtToken = extractJwtFromSecurityContext(); // Use user's token
-            requestTemplate.header("Authorization", "Bearer " + jwtToken);
+
+            Authentication authentication =
+                    SecurityContextHolder
+                            .getContext()
+                            .getAuthentication();
+
+            /*
+             * Normal HTTP request.
+             *
+             * Forward the customer's JWT.
+             */
+            if (authentication != null) {
+
+                Object credentials =
+                        authentication.getCredentials();
+
+                if (credentials instanceof String token
+                        && !token.isBlank()) {
+
+                    requestTemplate.header(
+                            "Authorization",
+                            "Bearer " + token
+                    );
+
+                    return;
+                }
+            }
+
+            /*
+             * No HTTP SecurityContext.
+             *
+             * This normally happens when the Feign call
+             * originates from a Kafka listener.
+             *
+             * Use an internal Order Service JWT.
+             */
+            String serviceToken =
+                    serviceJwtUtil.generateServiceToken();
+
+            requestTemplate.header(
+                    "Authorization",
+                    "Bearer " + serviceToken
+            );
         };
     }
-
-    private String extractJwtFromSecurityContext() {
-        org.springframework.security.core.context.SecurityContext context =
-                org.springframework.security.core.context.SecurityContextHolder.getContext();
-
-        if (context.getAuthentication() != null &&
-            context.getAuthentication().getCredentials() instanceof String) {
-            return context.getAuthentication().getCredentials().toString();
-        }
-
-        throw new RuntimeException("JWT token not found in security context");
-    }
-
 }
-

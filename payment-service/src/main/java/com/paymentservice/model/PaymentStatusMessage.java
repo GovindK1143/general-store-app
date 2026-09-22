@@ -1,18 +1,26 @@
 package com.paymentservice.model;
 
-import com.fasterxml.jackson.databind.annotation.JsonDeserialize;
-import com.fasterxml.jackson.databind.annotation.JsonSerialize;
+import java.io.Serializable;
+import java.time.LocalDateTime;
 
-import lombok.*;
+import lombok.AllArgsConstructor;
+import lombok.Data;
+import lombok.NoArgsConstructor;
 
 @Data
 @NoArgsConstructor
 @AllArgsConstructor
-@JsonSerialize
-@JsonDeserialize
-public class PaymentStatusMessage {
+public class PaymentStatusMessage implements Serializable {
+
     private Long orderId;
+
+    private Long userId;
+
+    private Double amount;
+
     private String paymentStatus;
+
     private String transactionId;
-    private double amount;
+
+    private LocalDateTime paymentDate;
 }
