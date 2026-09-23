@@ -4,51 +4,94 @@ server:
 spring:
   application:
     name: API-GATEWAY
+
   cloud:
     gateway:
+
       globalcors:
         cors-configurations:
           '[/**]':
-             allowedOrigins: "http://localhost:4200"
-             allowedMethods: "*"
-             allowedHeaders: "*"
+            allowedOrigins:
+              - "http://localhost:4200"
+            allowedMethods:
+              - GET
+              - POST
+              - PUT
+              - PATCH
+              - DELETE
+              - OPTIONS
+            allowedHeaders:
+              - "*"
+            allowCredentials: true
 
       discovery:
         locator:
           enabled: true
           lower-case-service-id: true
+
       routes:
-        - id: PRODUCT-SERVICE
-          uri: lb://PRODUCT-SERVICE
-          predicates:
-            - Path=/products/**
-        - id: ORDER-SERVICE
-          uri: lb://ORDER-SERVICE
-          predicates:
-            - Path=/orders/**
-          filters:
-          - PreserveHostHeader
-        - id: PAYMENT-SERVICE
-          uri: lb://PAYMENT-SERVICE
-          predicates:
-            - Path=/payments/**
+
+        # =========================
+        # AUTH SERVICE
+        # =========================
         - id: AUTH-SERVICE
           uri: lb://AUTH-SERVICE
           predicates:
             - Path=/auth/**
+
+        # =========================
+        # USER SERVICE
+        # =========================
+        - id: USER-SERVICE
+          uri: lb://USER-SERVICE
+          predicates:
+            - Path=/users/**
+
+        # =========================
+        # PRODUCT SERVICE
+        # =========================
+        - id: PRODUCT-SERVICE
+          uri: lb://PRODUCT-SERVICE
+          predicates:
+            - Path=/products/**
+
+        # =========================
+        # ORDER SERVICE
+        # =========================
+        - id: ORDER-SERVICE
+          uri: lb://ORDER-SERVICE
+          predicates:
+            - Path=/orders/**
+
+        # =========================
+        # PAYMENT SERVICE
+        # =========================
+        - id: PAYMENT-SERVICE
+          uri: lb://PAYMENT-SERVICE
+          predicates:
+            - Path=/payments/**
+
+        # =========================
+        # CART SERVICE
+        # =========================
+        - id: CART-SERVICE
+          uri: lb://CART-SERVICE
+          predicates:
+            - Path=/cart/**
 
 eureka:
   client:
     register-with-eureka: true
     fetch-registry: true
     service-url:
-      defaultZone: http://localhost:8761/eureka
+      defaultZone: http://localhost:8761/eureka/
 
 management:
   endpoints:
     web:
       exposure:
         include: "*"
+
   endpoint:
     gateway:
       enabled: true
