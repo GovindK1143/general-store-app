@@ -7,6 +7,7 @@ import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.kafka.core.KafkaTemplate;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
+import org.springframework.dao.DataIntegrityViolationException;
 
 import com.paymentservice.dto.PaymentRequest;
 import com.paymentservice.dto.PaymentResponse;
@@ -23,6 +24,9 @@ public class PaymentService {
     private PaymentRepository paymentRepository;
 
     @Autowired
+    private PaymentCreationService paymentCreationService;
+
+    @Autowired
     private KafkaTemplate<String, PaymentStatusMessage> kafkaTemplate;
 
     @Transactional
@@ -30,15 +34,17 @@ public class PaymentService {
 
         /*
          * Check whether a payment already exists for this order.
-         * This makes the payment operation idempotent.
          */
         Payment payment = paymentRepository.findByOrderId(request.getOrderId())
                 .orElse(null);
 
         /*
-         * If payment was already successful, don't create another payment.
+         * Existing successful payment.
+         *
+         * This is the normal idempotency path.
          */
-        if (payment != null && "SUCCESS".equalsIgnoreCase(payment.getPaymentStatus())) {
+        if (payment != null &&
+                "SUCCESS".equalsIgnoreCase(payment.getPaymentStatus())) {
 
             publishPaymentStatus(payment);
 
@@ -46,46 +52,72 @@ public class PaymentService {
         }
 
         /*
-         * Create a new payment or retry an existing pending/failed payment.
-         */
-        if (payment == null) {
-
-            payment = new Payment();
-
-            payment.setOrderId(request.getOrderId());
-            payment.setUserId(request.getUserId());
-
-        }
-
-        payment.setAmount(request.getAmount());
-
-        /*
-         * For now this is a mock/simulated payment.
+         * Existing FAILED/PENDING payment.
          *
-         * Later we can replace this section with:
-         * Razorpay / Stripe / PayU / payment gateway integration.
+         * Retry the existing payment.
          */
-        if (Boolean.TRUE.equals(request.getSimulateFailure())) {
+        if (payment != null) {
 
-            payment.setPaymentStatus("FAILED");
+            payment.setAmount(request.getAmount());
 
-            payment.setTransactionId(null);
+            if (Boolean.TRUE.equals(request.getSimulateFailure())) {
 
-            payment.setPaymentDate(LocalDateTime.now());
+                payment.setPaymentStatus("FAILED");
+                payment.setTransactionId(null);
+                payment.setPaymentDate(LocalDateTime.now());
 
-        } else {
+            } else {
 
-            payment.setPaymentStatus("SUCCESS");
+                payment.setPaymentStatus("SUCCESS");
+                payment.setTransactionId(generateTransactionId());
+                payment.setPaymentDate(LocalDateTime.now());
+            }
 
-            payment.setTransactionId(generateTransactionId());
+            payment = paymentRepository.save(payment);
 
-            payment.setPaymentDate(LocalDateTime.now());
+            publishPaymentStatus(payment);
+
+            return PaymentResponse.fromPayment(payment);
         }
 
-        payment = paymentRepository.save(payment);
+        /*
+         * No payment exists yet.
+         *
+         * Try to create the payment in a separate transaction.
+         *
+         * If another concurrent request creates the payment first,
+         * the database UNIQUE constraint on order_id will reject
+         * this insert.
+         */
+        try {
+
+            payment = paymentCreationService.createPayment(
+                    request.getOrderId(),
+                    request.getUserId(),
+                    request.getAmount(),
+                    request.getSimulateFailure()
+            );
+
+        } catch (DataIntegrityViolationException exception) {
+
+            /*
+             * Another concurrent request created the payment first.
+             *
+             * Read the payment that was created by that request.
+             */
+            payment = paymentRepository
+                    .findByOrderId(request.getOrderId())
+                    .orElseThrow(() ->
+                            new IllegalStateException(
+                                    "Payment creation conflict for order ID: "
+                                            + request.getOrderId(),
+                                    exception
+                            )
+                    );
+        }
 
         /*
-         * Notify Order Service through Kafka.
+         * Publish the payment record that exists in the database.
          */
         publishPaymentStatus(payment);
 

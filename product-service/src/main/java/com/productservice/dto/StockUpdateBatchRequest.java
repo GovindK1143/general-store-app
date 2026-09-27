@@ -11,5 +11,7 @@ import lombok.NoArgsConstructor;
 @AllArgsConstructor
 public class StockUpdateBatchRequest {
 
+    private Long orderId;
+
     private List<StockUpdateItem> items;
 }

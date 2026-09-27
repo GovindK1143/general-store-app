@@ -1,21 +1,16 @@
 package com.orderservice.config;
 
-import java.util.ArrayList;
-import java.util.HashMap;
-import java.util.List;
-import java.util.Map;
 import java.util.Optional;
+
+import com.orderservice.model.Order;
+import com.orderservice.model.PaymentStatusMessage;
+import com.orderservice.repository.OrderRepository;
+import com.orderservice.service.ProductStockService;
 
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.kafka.annotation.KafkaListener;
 import org.springframework.stereotype.Component;
 import org.springframework.transaction.annotation.Transactional;
-
-import com.orderservice.client.ProductServiceClient;
-import com.orderservice.model.Order;
-import com.orderservice.model.OrderItem;
-import com.orderservice.model.PaymentStatusMessage;
-import com.orderservice.repository.OrderRepository;
 
 import lombok.extern.slf4j.Slf4j;
 
@@ -27,12 +22,16 @@ public class PaymentStatusListener {
     private OrderRepository orderRepository;
 
     @Autowired
-    private ProductServiceClient productServiceClient;
+    private ProductStockService productStockService;
 
     private static final int MAX_RETRIES = 5;
 
     private static final long RETRY_DELAY_MS = 1000;
 
+
+    // =========================================================
+    // KAFKA PAYMENT STATUS LISTENER
+    // =========================================================
 
     @KafkaListener(
             topics = "payment.status.topic",
@@ -51,6 +50,10 @@ public class PaymentStatusListener {
         );
 
 
+        // =========================================================
+        // VALIDATE ORDER ID
+        // =========================================================
+
         if (message.getOrderId() == null) {
 
             log.warn(
@@ -60,6 +63,10 @@ public class PaymentStatusListener {
             return;
         }
 
+
+        // =========================================================
+        // FIND ORDER
+        // =========================================================
 
         Order order =
                 findOrderWithRetry(
@@ -71,12 +78,24 @@ public class PaymentStatusListener {
 
             log.error(
                     "Order still not found after {} retries. " +
-                            "orderId={}. Payment event could not be applied.",
+                            "orderId={}. Kafka will retry the payment event.",
                     MAX_RETRIES,
                     message.getOrderId()
             );
 
-            return;
+            /*
+             * IMPORTANT:
+             *
+             * Do not simply return here.
+             *
+             * Throwing the exception tells Spring Kafka that
+             * processing failed. The configured Kafka
+             * DefaultErrorHandler will then retry the message.
+             */
+            throw new IllegalStateException(
+                    "Order not found after retries. orderId="
+                            + message.getOrderId()
+            );
         }
 
 
@@ -93,7 +112,7 @@ public class PaymentStatusListener {
 
 
             // -----------------------------------------------------
-            // Idempotency
+            // IDEMPOTENCY CHECK
             // -----------------------------------------------------
 
             if (Boolean.TRUE.equals(
@@ -110,42 +129,44 @@ public class PaymentStatusListener {
 
 
             // -----------------------------------------------------
-            // Update stock for ALL order items
+            // UPDATE STOCK FOR ALL ORDER ITEMS
+            //
+            // ProductStockService contains Resilience4j @Retry.
+            //
+            // If all Resilience4j attempts fail, the exception
+            // is deliberately propagated to Kafka.
             // -----------------------------------------------------
 
-            boolean stockUpdated =
-                    updateProductStock(order);
+            try {
 
+                productStockService.updateProductStock(
+                        order
+                );
 
-            if (!stockUpdated) {
+            } catch (Exception exception) {
 
                 log.error(
-                        "Payment succeeded but stock update failed. " +
-                                "orderId={}",
-                        order.getId()
+                        "Stock update failed after Resilience4j retries. " +
+                                "orderId={}. Kafka will retry this message.",
+                        order.getId(),
+                        exception
                 );
 
-
-                order.setPaymentStatus(
-                        "SUCCESS"
-                );
-
-                order.setOrderStatus(
-                        "PENDING"
-                );
-
-                order.setStockUpdated(
-                        false
-                );
-
-                orderRepository.save(order);
-
-                return;
+                /*
+                 * IMPORTANT:
+                 *
+                 * Do NOT swallow this exception.
+                 *
+                 * Spring Kafka must know that processing failed
+                 * so that DefaultErrorHandler can perform the
+                 * configured Kafka-level retries.
+                 */
+                throw exception;
             }
 
 
             // -----------------------------------------------------
-            // Stock update succeeded
+            // STOCK UPDATE SUCCESSFUL
             // -----------------------------------------------------
 
             order.setPaymentStatus(
@@ -178,7 +199,7 @@ public class PaymentStatusListener {
 
 
             // =========================================================
-            // PAYMENT PENDING
+            // PAYMENT PENDING / UNKNOWN STATUS
             // =========================================================
 
         } else {
@@ -193,7 +214,13 @@ public class PaymentStatusListener {
         }
 
 
-        orderRepository.save(order);
+        // =========================================================
+        // SAVE ORDER
+        // =========================================================
+
+        orderRepository.save(
+                order
+        );
 
 
         log.info(
@@ -203,90 +230,6 @@ public class PaymentStatusListener {
                 order.getOrderStatus(),
                 order.getPaymentStatus()
         );
-    }
-
-
-    // =========================================================
-    // BATCH STOCK UPDATE
-    // =========================================================
-
-    private boolean updateProductStock(
-            Order order) {
-
-        List<Map<String, Object>> items =
-                new ArrayList<>();
-
-
-        for (OrderItem orderItem :
-                order.getItems()) {
-
-            Map<String, Object> item =
-                    new HashMap<>();
-
-            item.put(
-                    "productId",
-                    orderItem.getProductId()
-            );
-
-            item.put(
-                    "quantity",
-                    orderItem.getQuantity()
-            );
-
-            items.add(item);
-        }
-
-
-        if (items.isEmpty()) {
-
-            log.error(
-                    "Order contains no items. " +
-                            "orderId={}",
-                    order.getId()
-            );
-
-            return false;
-        }
-
-
-        Map<String, Object> request =
-                new HashMap<>();
-
-        request.put(
-                "items",
-                items
-        );
-
-
-        try {
-
-            productServiceClient
-                    .updateProductStockBatch(
-                            request
-                    );
-
-
-            log.info(
-                    "Product stock batch updated successfully. " +
-                            "orderId={}, itemCount={}",
-                    order.getId(),
-                    items.size()
-            );
-
-            return true;
-
-
-        } catch (Exception exception) {
-
-            log.error(
-                    "Failed to update product stock batch. " +
-                            "orderId={}",
-                    order.getId(),
-                    exception
-            );
-
-            return false;
-        }
     }
 
 

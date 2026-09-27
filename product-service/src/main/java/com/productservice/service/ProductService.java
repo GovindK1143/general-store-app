@@ -1,28 +1,33 @@
 package com.productservice.service;
 
-import java.util.List;
-
-import org.springframework.beans.factory.annotation.Autowired;
-import org.springframework.stereotype.Service;
+import java.time.LocalDateTime;
 import java.util.ArrayList;
 import java.util.HashSet;
+import java.util.List;
 import java.util.Set;
 
+import com.productservice.model.StockUpdateStatus;
+import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
 import com.productservice.dto.StockUpdateBatchRequest;
 import com.productservice.dto.StockUpdateItem;
-
 import com.productservice.exception.InsufficientStockException;
 import com.productservice.exception.ProductNotFoundException;
 import com.productservice.model.Product;
+import com.productservice.model.StockUpdateTransaction;
 import com.productservice.repository.ProductRepository;
+import com.productservice.repository.StockUpdateTransactionRepository;
 
 @Service
 public class ProductService {
 
     @Autowired
     private ProductRepository productRepository;
+
+    @Autowired
+    private StockUpdateTransactionRepository stockUpdateTransactionRepository;
 
 
     // =========================================================
@@ -431,135 +436,156 @@ public class ProductService {
         }
     }
 
+
     // =========================================================
-// BATCH UPDATE / REDUCE STOCK
-// =========================================================
+    // BATCH UPDATE / REDUCE STOCK
+    // WITH IDEMPOTENCY
+    // =========================================================
 
     @Transactional
-    public void updateStockBatch(
-            StockUpdateBatchRequest request) {
+    public void updateStockBatch(StockUpdateBatchRequest request) {
 
-        // -----------------------------------------------------
-        // Validate request
-        // -----------------------------------------------------
-
-        if (request == null ||
-                request.getItems() == null ||
-                request.getItems().isEmpty()) {
-
-            throw new IllegalArgumentException(
-                    "At least one stock update item is required"
-            );
+        if (request == null) {
+            throw new IllegalArgumentException("Stock update request is required");
         }
 
-        // -----------------------------------------------------
-        // Prevent duplicate product IDs
-        // -----------------------------------------------------
+        if (request.getOrderId() == null) {
+            throw new IllegalArgumentException("Order ID is required for stock update");
+        }
 
+        if (request.getItems() == null || request.getItems().isEmpty()) {
+            throw new IllegalArgumentException("At least one stock update item is required");
+        }
+
+        Long orderId = request.getOrderId();
+
+        /*
+         * Try to claim this order for stock processing.
+         *
+         * The database unique constraint on order_id guarantees that
+         * only one transaction can successfully claim the same order.
+         */
+        int claimed = stockUpdateTransactionRepository.claimOrder(
+                orderId,
+                LocalDateTime.now()
+        );
+
+        if (claimed == 0) {
+
+            StockUpdateTransaction existingTransaction =
+                    stockUpdateTransactionRepository
+                            .findByOrderId(orderId)
+                            .orElseThrow(() ->
+                                    new IllegalStateException(
+                                            "Stock update transaction already exists for orderId="
+                                                    + orderId));
+
+            /*
+             * If another transaction already completed the stock update,
+             * this request is a duplicate and can safely be ignored.
+             */
+            if (existingTransaction.getStatus() == StockUpdateStatus.COMPLETED) {
+
+                return;
+            }
+
+            /*
+             * Normally PROCESSING should not be visible here because the
+             * PROCESSING record and stock update happen in the same database
+             * transaction.
+             *
+             * If it is visible, it indicates an incomplete/stale transaction.
+             */
+            throw new IllegalStateException(
+                    "Stock update is already being processed for orderId=" + orderId);
+        }
+
+        /*
+         * Validate duplicate product IDs before modifying any stock.
+         */
         Set<Long> productIds = new HashSet<>();
 
         for (StockUpdateItem item : request.getItems()) {
 
             if (item == null) {
-
                 throw new IllegalArgumentException(
-                        "Stock update item cannot be null"
-                );
+                        "Stock update item cannot be null");
             }
 
             if (item.getProductId() == null) {
-
                 throw new IllegalArgumentException(
-                        "Product ID is required"
-                );
+                        "Product ID is required");
             }
 
-            if (item.getQuantity() == null ||
-                    item.getQuantity() <= 0) {
-
+            if (item.getQuantity() == null || item.getQuantity() <= 0) {
                 throw new IllegalArgumentException(
-                        "Quantity must be greater than zero " +
-                                "for product ID: " +
-                                item.getProductId()
-                );
+                        "Quantity must be greater than zero for productId="
+                                + item.getProductId());
             }
 
             if (!productIds.add(item.getProductId())) {
-
                 throw new IllegalArgumentException(
-                        "Duplicate product ID in stock update request: "
-                                + item.getProductId()
-                );
+                        "Duplicate product ID in stock update: "
+                                + item.getProductId());
             }
         }
 
-        // -----------------------------------------------------
-        // IMPORTANT:
-        // First validate ALL products and stock.
-        // Do not reduce any stock yet.
-        // -----------------------------------------------------
-
-        List<Product> productsToUpdate =
-                new ArrayList<>();
+        /*
+         * Load and validate ALL products before changing ANY stock.
+         */
+        List<Product> productsToUpdate = new ArrayList<>();
 
         for (StockUpdateItem item : request.getItems()) {
 
-            Product product =
-                    productRepository.findById(
-                            item.getProductId()
-                    ).orElseThrow(() ->
+            Product product = productRepository
+                    .findById(item.getProductId())
+                    .orElseThrow(() ->
                             new ProductNotFoundException(
                                     "Product not found with ID: "
-                                            + item.getProductId()
-                            )
-                    );
+                                            + item.getProductId()));
 
             if (!Boolean.TRUE.equals(product.getActive())) {
-
                 throw new ProductNotFoundException(
                         "Product is currently unavailable: "
-                                + item.getProductId()
-                );
+                                + item.getProductId());
             }
 
             if (product.getStock() < item.getQuantity()) {
-
                 throw new InsufficientStockException(
-                        "Insufficient stock for product ID: "
-                                + item.getProductId()
-                                + ". Available stock: "
+                        "Insufficient stock for product: "
+                                + product.getName()
+                                + ". Available: "
                                 + product.getStock()
-                );
+                                + ", requested: "
+                                + item.getQuantity());
             }
+
+            product.setStock(
+                    product.getStock() - item.getQuantity()
+            );
 
             productsToUpdate.add(product);
         }
 
-        // -----------------------------------------------------
-        // ALL products passed validation.
-        // Now reduce stock.
-        // -----------------------------------------------------
-
-        for (int i = 0;
-             i < request.getItems().size();
-             i++) {
-
-            StockUpdateItem item =
-                    request.getItems().get(i);
-
-            Product product =
-                    productsToUpdate.get(i);
-
-            product.setStock(
-                    product.getStock()
-                            - item.getQuantity()
-            );
-        }
-
-        // -----------------------------------------------------
-        // Save all updated products
-        // -----------------------------------------------------
-
+        /*
+         * Save all stock changes atomically.
+         */
         productRepository.saveAll(productsToUpdate);
+
+        /*
+         * Mark the transaction as COMPLETED.
+         */
+        StockUpdateTransaction transaction =
+                stockUpdateTransactionRepository
+                        .findByOrderId(orderId)
+                        .orElseThrow(() ->
+                                new IllegalStateException(
+                                        "Stock transaction not found for orderId="
+                                                + orderId));
+
+        transaction.setStatus(StockUpdateStatus.COMPLETED);
+        transaction.setProcessedAt(LocalDateTime.now());
+
+        stockUpdateTransactionRepository.save(transaction);
     }
 }
