@@ -1,6 +1,5 @@
 package com.cartservice.service;
 
-import com.cartservice.client.OrderServiceClient;
 import com.cartservice.client.ProductServiceClient;
 import com.cartservice.dto.*;
 import com.cartservice.exception.CartException;
@@ -27,7 +26,7 @@ public class CartService {
     private final CartRepository cartRepository;
     private final CartItemRepository cartItemRepository;
     private final ProductServiceClient productServiceClient;
-    private final OrderServiceClient orderServiceClient;
+    private final OrderCheckoutService orderCheckoutService;
 
     @Transactional
     public CartResponse addItem(
@@ -234,8 +233,7 @@ public class CartService {
                 orderItems.size()
         );
 
-        Map<String, Object> response =
-                orderServiceClient.placeOrder(request);
+        Map<String, Object> response = orderCheckoutService.placeOrder(request);
 
         if (response == null || response.isEmpty()) {
             throw new CartException(
