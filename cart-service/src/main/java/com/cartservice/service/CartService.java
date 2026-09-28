@@ -1,22 +1,33 @@
 package com.cartservice.service;
 
+import java.time.LocalDateTime;
+import java.util.ArrayList;
+import java.util.List;
+import java.util.Map;
+
+import org.springframework.cache.annotation.CacheEvict;
+import org.springframework.cache.annotation.CachePut;
+import org.springframework.cache.annotation.Cacheable;
+import org.springframework.stereotype.Service;
+import org.springframework.transaction.annotation.Transactional;
+
 import com.cartservice.client.ProductServiceClient;
-import com.cartservice.dto.*;
+import com.cartservice.dto.AddCartItemRequest;
+import com.cartservice.dto.CartItemResponse;
+import com.cartservice.dto.CartResponse;
+import com.cartservice.dto.CreateOrderRequest;
+import com.cartservice.dto.OrderItemRequest;
+import com.cartservice.dto.ProductResponse;
+import com.cartservice.dto.UpdateCartItemRequest;
 import com.cartservice.exception.CartException;
 import com.cartservice.exception.CartNotFoundException;
 import com.cartservice.model.Cart;
 import com.cartservice.model.CartItem;
 import com.cartservice.repository.CartItemRepository;
 import com.cartservice.repository.CartRepository;
+
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
-import org.springframework.stereotype.Service;
-import org.springframework.transaction.annotation.Transactional;
-
-import java.time.LocalDateTime;
-import java.util.ArrayList;
-import java.util.List;
-import java.util.Map;
 
 @Service
 @Slf4j
@@ -24,11 +35,30 @@ import java.util.Map;
 public class CartService {
 
     private final CartRepository cartRepository;
+
     private final CartItemRepository cartItemRepository;
+
     private final ProductServiceClient productServiceClient;
+
     private final OrderCheckoutService orderCheckoutService;
 
+
+    /*
+     * ============================================================
+     * ADD ITEM
+     * ============================================================
+     *
+     * After successfully adding/updating an item, the returned
+     * CartResponse is written directly into Redis.
+     *
+     * Redis key:
+     * carts::user:2
+     */
     @Transactional
+    @CachePut(
+            value = "carts",
+            key = "'user:' + #userId"
+    )
     public CartResponse addItem(
             Long userId,
             AddCartItemRequest request) {
@@ -41,6 +71,7 @@ public class CartService {
         validateProduct(product);
 
         if (product.getStock() < request.getQuantity()) {
+
             throw new CartException(
                     "Insufficient stock for product: "
                             + product.getName()
@@ -80,6 +111,7 @@ public class CartService {
                             + request.getQuantity();
 
             if (newQuantity > product.getStock()) {
+
                 throw new CartException(
                         "Requested quantity exceeds available stock. "
                                 + "Available stock: "
@@ -97,19 +129,59 @@ public class CartService {
         return buildCartResponse(cart);
     }
 
+
+    /*
+     * ============================================================
+     * GET CART
+     * ============================================================
+     *
+     * First request:
+     *     Redis MISS
+     *     -> MySQL
+     *     -> Product Service
+     *     -> response stored in Redis
+     *
+     * Next request:
+     *     Redis HIT
+     *     -> MySQL is not queried
+     *     -> Product Service is not called
+     */
     @Transactional
+    @Cacheable(
+            value = "carts",
+            key = "'user:' + #userId"
+    )
     public CartResponse getCart(Long userId) {
 
         validateUserId(userId);
 
+        log.info(
+                "Redis cache MISS for cart. userId={}",
+                userId
+        );
+
         Cart cart =
                 cartRepository.findByUserId(userId)
-                        .orElseGet(() -> createEmptyCart(userId));
+                        .orElseGet(
+                                () -> createEmptyCart(userId)
+                        );
 
         return buildCartResponse(cart);
     }
 
+
+    /*
+     * ============================================================
+     * UPDATE ITEM
+     * ============================================================
+     *
+     * Returned CartResponse replaces the old Redis value.
+     */
     @Transactional
+    @CachePut(
+            value = "carts",
+            key = "'user:' + #userId"
+    )
     public CartResponse updateItem(
             Long userId,
             Long productId,
@@ -123,6 +195,7 @@ public class CartService {
         validateProduct(product);
 
         if (request.getQuantity() > product.getStock()) {
+
             throw new CartException(
                     "Requested quantity exceeds available stock. "
                             + "Available stock: "
@@ -138,13 +211,15 @@ public class CartService {
                                 cart.getId(),
                                 productId
                         )
-                        .orElseThrow(() ->
-                                new CartException(
+                        .orElseThrow(
+                                () -> new CartException(
                                         "Product is not present in cart"
                                 )
                         );
 
-        item.setQuantity(request.getQuantity());
+        item.setQuantity(
+                request.getQuantity()
+        );
 
         cart.setUpdatedAt(LocalDateTime.now());
 
@@ -153,7 +228,19 @@ public class CartService {
         return buildCartResponse(cart);
     }
 
+
+    /*
+     * ============================================================
+     * REMOVE ITEM
+     * ============================================================
+     *
+     * Returned CartResponse replaces the old Redis value.
+     */
     @Transactional
+    @CachePut(
+            value = "carts",
+            key = "'user:' + #userId"
+    )
     public CartResponse removeItem(
             Long userId,
             Long productId) {
@@ -168,8 +255,8 @@ public class CartService {
                                 cart.getId(),
                                 productId
                         )
-                        .orElseThrow(() ->
-                                new CartException(
+                        .orElseThrow(
+                                () -> new CartException(
                                         "Product is not present in cart"
                                 )
                         );
@@ -183,7 +270,24 @@ public class CartService {
         return buildCartResponse(cart);
     }
 
+
+    /*
+     * ============================================================
+     * CLEAR CART
+     * ============================================================
+     *
+     * The Redis cart is removed completely.
+     *
+     * Next GET /cart:
+     *     Redis MISS
+     *     -> MySQL
+     *     -> empty cart response cached again
+     */
     @Transactional
+    @CacheEvict(
+            value = "carts",
+            key = "'user:' + #userId"
+    )
     public void clearCart(Long userId) {
 
         validateUserId(userId);
@@ -195,9 +299,35 @@ public class CartService {
         cart.setUpdatedAt(LocalDateTime.now());
 
         cartRepository.save(cart);
+
+        log.info(
+                "Cart cleared and Redis cache evicted. userId={}",
+                userId
+        );
     }
 
+
+    /*
+     * ============================================================
+     * CHECKOUT
+     * ============================================================
+     *
+     * Redis is evicted only when this method completes
+     * successfully.
+     *
+     * If Order Service fails:
+     *     fallback is triggered
+     *     exception is thrown
+     *     Redis cart remains intact
+     *
+     * This is important because the customer should not lose
+     * their cart when checkout fails.
+     */
     @Transactional
+    @CacheEvict(
+            value = "carts",
+            key = "'user:' + #userId"
+    )
     public Object checkout(Long userId) {
 
         validateUserId(userId);
@@ -215,11 +345,12 @@ public class CartService {
         List<OrderItemRequest> orderItems =
                 cart.getItems()
                         .stream()
-                        .map(item ->
-                                new OrderItemRequest(
-                                        item.getProductId(),
-                                        item.getQuantity()
-                                )
+                        .map(
+                                item ->
+                                        new OrderItemRequest(
+                                                item.getProductId(),
+                                                item.getQuantity()
+                                        )
                         )
                         .toList();
 
@@ -233,17 +364,20 @@ public class CartService {
                 orderItems.size()
         );
 
-        Map<String, Object> response = orderCheckoutService.placeOrder(request);
+        Map<String, Object> response =
+                orderCheckoutService.placeOrder(request);
 
-        if (response == null || response.isEmpty()) {
+        if (response == null ||
+                response.isEmpty()) {
+
             throw new CartException(
                     "Unable to create order"
             );
         }
 
         /*
-         * Clear the cart only after Order Service
-         * successfully accepts the order.
+         * Clear the database cart only after
+         * Order Service successfully accepts the order.
          */
         cart.getItems().clear();
 
@@ -251,18 +385,35 @@ public class CartService {
 
         cartRepository.save(cart);
 
+        log.info(
+                "Checkout successful. Cart cleared and Redis cache evicted. userId={}",
+                userId
+        );
+
         return response;
     }
 
+
+    /*
+     * ============================================================
+     * GET OR CREATE CART
+     * ============================================================
+     */
     private Cart getOrCreateCart(Long userId) {
 
         return cartRepository
                 .findByUserId(userId)
-                .orElseGet(() ->
-                        createEmptyCart(userId)
+                .orElseGet(
+                        () -> createEmptyCart(userId)
                 );
     }
 
+
+    /*
+     * ============================================================
+     * CREATE EMPTY CART
+     * ============================================================
+     */
     private Cart createEmptyCart(Long userId) {
 
         LocalDateTime now =
@@ -271,28 +422,45 @@ public class CartService {
         Cart cart = new Cart();
 
         cart.setUserId(userId);
+
         cart.setCreatedAt(now);
+
         cart.setUpdatedAt(now);
+
         cart.setItems(new ArrayList<>());
 
         return cartRepository.save(cart);
     }
 
+
+    /*
+     * ============================================================
+     * GET CART ENTITY
+     * ============================================================
+     */
     private Cart getCartEntity(Long userId) {
 
         return cartRepository
                 .findByUserId(userId)
-                .orElseThrow(() ->
-                        new CartNotFoundException(
-                                "Cart not found for user: "
-                                        + userId
-                        )
+                .orElseThrow(
+                        () ->
+                                new CartNotFoundException(
+                                        "Cart not found for user: "
+                                                + userId
+                                )
                 );
     }
 
+
+    /*
+     * ============================================================
+     * GET PRODUCT
+     * ============================================================
+     */
     private ProductResponse getProduct(Long productId) {
 
         if (productId == null) {
+
             throw new CartException(
                     "Product ID is required"
             );
@@ -305,6 +473,7 @@ public class CartService {
                             .getProductById(productId);
 
             if (product == null) {
+
                 throw new CartException(
                         "Product not found with ID: "
                                 + productId
@@ -314,6 +483,7 @@ public class CartService {
             return product;
 
         } catch (CartException exception) {
+
             throw exception;
 
         } catch (Exception exception) {
@@ -330,9 +500,17 @@ public class CartService {
         }
     }
 
-    private void validateProduct(ProductResponse product) {
 
-        if (!Boolean.TRUE.equals(product.getActive())) {
+    /*
+     * ============================================================
+     * VALIDATE PRODUCT
+     * ============================================================
+     */
+    private void validateProduct(
+            ProductResponse product) {
+
+        if (!Boolean.TRUE.equals(
+                product.getActive())) {
 
             throw new CartException(
                     "Product is currently unavailable: "
@@ -355,7 +533,18 @@ public class CartService {
         }
     }
 
-    private CartResponse buildCartResponse(Cart cart) {
+
+    /*
+     * ============================================================
+     * BUILD CART RESPONSE
+     * ============================================================
+     *
+     * This DTO is what gets stored in Redis.
+     *
+     * We deliberately do NOT cache the JPA Cart entity.
+     */
+    private CartResponse buildCartResponse(
+            Cart cart) {
 
         List<CartItemResponse> items =
                 new ArrayList<>();
@@ -364,10 +553,13 @@ public class CartService {
 
         int totalItems = 0;
 
-        for (CartItem cartItem : cart.getItems()) {
+        for (CartItem cartItem :
+                cart.getItems()) {
 
             ProductResponse product =
-                    getProduct(cartItem.getProductId());
+                    getProduct(
+                            cartItem.getProductId()
+                    );
 
             double subtotal =
                     product.getSellingPrice()
@@ -391,7 +583,8 @@ public class CartService {
 
             totalAmount += subtotal;
 
-            totalItems += cartItem.getQuantity();
+            totalItems +=
+                    cartItem.getQuantity();
         }
 
         return CartResponse.builder()
@@ -403,6 +596,12 @@ public class CartService {
                 .build();
     }
 
+
+    /*
+     * ============================================================
+     * VALIDATE USER
+     * ============================================================
+     */
     private void validateUserId(Long userId) {
 
         if (userId == null) {
