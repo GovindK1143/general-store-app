@@ -8,6 +8,12 @@ import java.util.Set;
 
 import com.productservice.model.StockUpdateStatus;
 import org.springframework.beans.factory.annotation.Autowired;
+
+import org.springframework.cache.Cache;
+import org.springframework.cache.CacheManager;
+import org.springframework.cache.annotation.Cacheable;
+import org.springframework.cache.annotation.CacheEvict;
+import org.springframework.cache.annotation.Caching;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
@@ -29,11 +35,19 @@ public class ProductService {
     @Autowired
     private StockUpdateTransactionRepository stockUpdateTransactionRepository;
 
+    @Autowired
+    private CacheManager cacheManager;
+
 
     // =========================================================
     // ADD PRODUCT
     // =========================================================
 
+    @Caching(evict = {
+            @CacheEvict(value = "productList", key = "'all'"),
+            @CacheEvict(value = "productCategory", allEntries = true),
+            @CacheEvict(value = "productSearch", allEntries = true)
+    })
     public Product addProduct(Product product) {
 
         if (product.getStock() == null) {
@@ -54,6 +68,7 @@ public class ProductService {
     // GET ALL ACTIVE PRODUCTS
     // =========================================================
 
+    @Cacheable(value = "productList", key = "'all'")
     public List<Product> getAllProducts() {
 
         return productRepository.findByActiveTrue();
@@ -64,6 +79,7 @@ public class ProductService {
     // GET PRODUCTS BY CATEGORY
     // =========================================================
 
+    @Cacheable(value = "productCategory", key = "#category.toLowerCase()")
     public List<Product> getProductsByCategory(String category) {
 
         return productRepository
@@ -75,6 +91,10 @@ public class ProductService {
     // SEARCH PRODUCTS
     // =========================================================
 
+    @Cacheable(
+            value = "productSearch",
+            key = "#keyword.trim().toLowerCase()"
+    )
     public List<Product> searchProducts(String keyword) {
 
         return productRepository
@@ -85,7 +105,7 @@ public class ProductService {
     // =========================================================
     // GET PRODUCT BY ID
     // =========================================================
-
+    @Cacheable(value = "products", key = "#productId")
     public Product getProductById(Long productId) {
 
         Product product = productRepository
@@ -112,6 +132,12 @@ public class ProductService {
     // UPDATE PRODUCT
     // =========================================================
 
+    @Caching(evict = {
+            @CacheEvict(value = "products", key = "#productId"),
+            @CacheEvict(value = "productList", key = "'all'"),
+            @CacheEvict(value = "productCategory", allEntries = true),
+            @CacheEvict(value = "productSearch", allEntries = true)
+    })
     public Product updateProduct(
             Long productId,
             Product updatedProduct) {
@@ -260,6 +286,12 @@ public class ProductService {
     // ACTIVATE / DEACTIVATE PRODUCT
     // =========================================================
 
+    @Caching(evict = {
+            @CacheEvict(value = "products", key = "#productId"),
+            @CacheEvict(value = "productList", key = "'all'"),
+            @CacheEvict(value = "productCategory", allEntries = true),
+            @CacheEvict(value = "productSearch", allEntries = true)
+    })
     public Product updateProductStatus(
             Long productId,
             Boolean active) {
@@ -291,6 +323,12 @@ public class ProductService {
     // UPDATE / REDUCE STOCK
     // =========================================================
 
+    @Caching(evict = {
+            @CacheEvict(value = "products", key = "#productId"),
+            @CacheEvict(value = "productList", key = "'all'"),
+            @CacheEvict(value = "productCategory", allEntries = true),
+            @CacheEvict(value = "productSearch", allEntries = true)
+    })
     public void updateStock(
             Long productId,
             int quantity) {
@@ -587,5 +625,33 @@ public class ProductService {
         transaction.setProcessedAt(LocalDateTime.now());
 
         stockUpdateTransactionRepository.save(transaction);
+
+        Cache cache = cacheManager.getCache("products");
+
+        if (cache != null) {
+            for (StockUpdateItem item : request.getItems()) {
+                cache.evict(item.getProductId());
+            }
+        }
+
+        Cache productListCache = cacheManager.getCache("productList");
+
+        if (productListCache != null) {
+            productListCache.evict("all");
+        }
+
+        Cache productCategoryCache =
+                cacheManager.getCache("productCategory");
+
+        if (productCategoryCache != null) {
+            productCategoryCache.clear();
+        }
+
+        Cache productSearchCache =
+                cacheManager.getCache("productSearch");
+
+        if (productSearchCache != null) {
+            productSearchCache.clear();
+        }
     }
 }
