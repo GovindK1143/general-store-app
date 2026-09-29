@@ -37,16 +37,13 @@ public class SecurityConfig {
                                 "/auth/register",
                                 "/auth/login",
                                 "/auth/send-otp",
-                                "/auth/verify-otp"
+                                "/auth/verify-otp",
+                                "/actuator/health"
                         ).permitAll()
 
                         .requestMatchers(
                                 "/auth/register-admin"
                         ).hasRole("ADMIN")
-
-                        .requestMatchers(
-                                "/actuator/health"
-                        ).permitAll()
 
                         .anyRequest()
                         .authenticated()

@@ -7,29 +7,29 @@ import org.springframework.security.core.userdetails.UsernameNotFoundException;
 import org.springframework.stereotype.Service;
 
 import com.auth_service.model.User;
-import com.auth_service.repository.UserRepository;
 
 @Service
 public class CustomUserDetailsService implements UserDetailsService {
 
-    private final UserRepository userRepository;
+    private final AuthUserCacheService authUserCacheService;
 
     public CustomUserDetailsService(
-            UserRepository userRepository) {
+            AuthUserCacheService authUserCacheService) {
 
-        this.userRepository = userRepository;
+        this.authUserCacheService = authUserCacheService;
     }
 
     @Override
     public UserDetails loadUserByUsername(String username)
             throws UsernameNotFoundException {
 
-        User user = userRepository
-                .findByEmailIgnoreCase(username)
-                .orElseThrow(() ->
-                        new UsernameNotFoundException(
-                                "User not found: " + username
-                        ));
+        User user = authUserCacheService.findUserByEmail(username);
+
+        if (user == null) {
+            throw new UsernameNotFoundException(
+                    "User not found: " + username
+            );
+        }
 
         return org.springframework.security.core.userdetails.User
                 .withUsername(user.getEmail())

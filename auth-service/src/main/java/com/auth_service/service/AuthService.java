@@ -2,6 +2,7 @@ package com.auth_service.service;
 
 import java.util.Optional;
 
+import org.springframework.cache.annotation.Cacheable;
 import org.springframework.security.crypto.password.PasswordEncoder;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
@@ -17,20 +18,26 @@ public class AuthService {
 
     private final UserRepository userRepository;
     private final PasswordEncoder passwordEncoder;
+    private final AuthUserCacheService authUserCacheService;
 
     public AuthService(
             UserRepository userRepository,
-            PasswordEncoder passwordEncoder) {
+            PasswordEncoder passwordEncoder, AuthUserCacheService authUserCacheService) {
 
         this.userRepository = userRepository;
         this.passwordEncoder = passwordEncoder;
+        this.authUserCacheService = authUserCacheService;
     }
 
     @Transactional
     public User registerUser(RegisterRequest request) {
 
-        String email = request.getEmail().trim().toLowerCase();
-        String mobile = request.getMobile().trim();
+        String email = request.getEmail()
+                .trim()
+                .toLowerCase();
+
+        String mobile = request.getMobile()
+                .trim();
 
         if (userRepository.existsByEmailIgnoreCase(email)) {
             throw new DuplicateUserException(
@@ -49,11 +56,15 @@ public class AuthService {
         user.setName(request.getName().trim());
         user.setEmail(email);
         user.setMobile(mobile);
+
         user.setPassword(
-                passwordEncoder.encode(request.getPassword())
+                passwordEncoder.encode(
+                        request.getPassword()
+                )
         );
 
-        // Never allow customer registration to select the role.
+        // Never allow customer registration
+        // to select the role.
         user.setRole(Role.CUSTOMER);
 
         return userRepository.save(user);
@@ -62,8 +73,12 @@ public class AuthService {
     @Transactional
     public User registerAdmin(RegisterRequest request) {
 
-        String email = request.getEmail().trim().toLowerCase();
-        String mobile = request.getMobile().trim();
+        String email = request.getEmail()
+                .trim()
+                .toLowerCase();
+
+        String mobile = request.getMobile()
+                .trim();
 
         if (userRepository.existsByEmailIgnoreCase(email)) {
             throw new DuplicateUserException(
@@ -82,8 +97,11 @@ public class AuthService {
         user.setName(request.getName().trim());
         user.setEmail(email);
         user.setMobile(mobile);
+
         user.setPassword(
-                passwordEncoder.encode(request.getPassword())
+                passwordEncoder.encode(
+                        request.getPassword()
+                )
         );
 
         user.setRole(Role.ADMIN);
@@ -95,26 +113,22 @@ public class AuthService {
 
         String loginId = username.trim();
 
-        Optional<User> userOptional;
+        User user;
 
         if (loginId.contains("@")) {
-            userOptional =
-                    userRepository.findByEmailIgnoreCase(loginId);
+
+            user = authUserCacheService.findUserByEmail(loginId);
+
         } else {
-            userOptional =
-                    userRepository.findByMobile(loginId);
+
+            user = authUserCacheService.findUserByMobile(loginId);
         }
 
-        if (userOptional.isEmpty()) {
+        if (user == null) {
             return null;
         }
 
-        User user = userOptional.get();
-
-        if (!passwordEncoder.matches(
-                password,
-                user.getPassword())) {
-
+        if (!passwordEncoder.matches(password, user.getPassword())) {
             return null;
         }
 

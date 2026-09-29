@@ -7,6 +7,9 @@ import jakarta.validation.Valid;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.*;
+import java.util.Map;
+
+import org.springframework.security.core.Authentication;
 
 import com.auth_service.login.LoginRequest;
 import com.auth_service.login.RegisterRequest;
@@ -79,6 +82,18 @@ public class AuthController {
 
         return ResponseEntity.ok(
                 createLoginResponse(user)
+        );
+    }
+
+    @GetMapping("/me")
+    public ResponseEntity<?> getCurrentUser(
+            Authentication authentication) {
+
+        return ResponseEntity.ok(
+                Map.of(
+                        "username", authentication.getName(),
+                        "message", "Authenticated successfully"
+                )
         );
     }
 

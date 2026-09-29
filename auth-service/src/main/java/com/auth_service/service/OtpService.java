@@ -1,34 +1,71 @@
 package com.auth_service.service;
 
-import java.util.Map;
-import java.util.Random;
-import java.util.concurrent.ConcurrentHashMap;
+import java.time.Duration;
 
-import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.data.redis.core.StringRedisTemplate;
 import org.springframework.stereotype.Service;
 
 import com.auth_service.model.User;
-import com.auth_service.repository.UserRepository;
 
 @Service
 public class OtpService {
 
-    private final Map<String, String> otpStore = new ConcurrentHashMap<>();
+    private static final String OTP_PREFIX = "auth:otp:";
+    private static final long OTP_EXPIRY_MINUTES = 5;
 
-    @Autowired
-    private UserRepository userRepository;
+    private final StringRedisTemplate redisTemplate;
+    private final AuthUserCacheService authUserCacheService;
+
+    public OtpService(
+            StringRedisTemplate redisTemplate,
+            AuthUserCacheService authUserCacheService) {
+
+        this.redisTemplate = redisTemplate;
+        this.authUserCacheService = authUserCacheService;
+    }
 
     public void sendOtp(String mobile) {
-        String otp = String.valueOf(new Random().nextInt(899999) + 100000);
-        otpStore.put(mobile, otp);
-        System.out.println("📤 OTP sent to " + mobile + ": " + otp);
-        // TODO: Integrate with SMS provider
+
+        String otp = String.valueOf(
+                (int) (Math.random() * 900000) + 100000
+        );
+
+        String key = OTP_PREFIX + mobile.trim();
+
+        redisTemplate.opsForValue().set(
+                key,
+                otp,
+                Duration.ofMinutes(OTP_EXPIRY_MINUTES)
+        );
+
+        System.out.println(
+                "📤 OTP sent to " + mobile + ": " + otp
+        );
     }
 
-    public User verifyOtp(String mobile, String otp) {
-        if (!otp.equals(otpStore.getOrDefault(mobile, ""))) return null;
-        otpStore.remove(mobile);
-        return userRepository.findByMobile(mobile).orElse(null);
+    public User verifyOtp(
+            String mobile,
+            String otp) {
+
+        String key = OTP_PREFIX + mobile.trim();
+
+        String storedOtp =
+                redisTemplate.opsForValue().get(key);
+
+        if (storedOtp == null) {
+            return null;
+        }
+
+        if (!storedOtp.equals(otp)) {
+            return null;
+        }
+
+        // OTP is valid → delete immediately to prevent reuse
+        redisTemplate.delete(key);
+
+        // Reuse existing mobile-user Redis cache
+        return authUserCacheService.findUserByMobile(
+                mobile.trim()
+        );
     }
 }
-
