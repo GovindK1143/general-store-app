@@ -3,6 +3,7 @@ package com.orderservice.config;
 import com.orderservice.model.Order;
 import com.orderservice.model.PaymentStatusMessage;
 import com.orderservice.repository.OrderRepository;
+import com.orderservice.service.OrderCacheService;
 import com.orderservice.service.ProductStockService;
 
 import org.springframework.beans.factory.annotation.Autowired;
@@ -21,6 +22,9 @@ public class PaymentStatusDltListener {
 
     @Autowired
     private ProductStockService productStockService;
+
+    @Autowired
+    private OrderCacheService orderCacheService;
 
     @KafkaListener(
             topics = "payment.status.topic-dlt",
@@ -83,6 +87,11 @@ public class PaymentStatusDltListener {
 
             orderRepository.save(order);
 
+            // Evict cached order history after order update
+            orderCacheService.evictUserOrders(
+                    order.getUserId()
+            );
+
             log.info(
                     "DLT recovery successful. orderId={}, orderStatus={}, paymentStatus={}",
                     order.getId(),
@@ -96,6 +105,11 @@ public class PaymentStatusDltListener {
             order.setOrderStatus("CANCELLED");
 
             orderRepository.save(order);
+
+            // Evict cached order history after order update
+            orderCacheService.evictUserOrders(
+                    order.getUserId()
+            );
 
             log.info(
                     "DLT payment failure applied to order. orderId={}",

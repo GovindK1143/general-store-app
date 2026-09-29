@@ -10,6 +10,8 @@ import java.util.Set;
 
 import com.orderservice.dto.*;
 import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.cache.annotation.CacheEvict;
+import org.springframework.cache.annotation.Cacheable;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
@@ -79,6 +81,11 @@ public class OrderService {
     // =========================================================
     // GET USER ORDERS
     // =========================================================
+    @Cacheable(
+            value = "userOrders",
+            key = "'user:' + #userId",
+            unless = "#result == null"
+    )
     @Transactional(readOnly = true)
     public List<OrderResponse> getOrdersByUserId(Long userId) {
 
@@ -104,7 +111,10 @@ public class OrderService {
     // =========================================================
     // PLACE MULTI-PRODUCT ORDER
     // =========================================================
-
+    @CacheEvict(
+            value = "userOrders",
+            key = "'user:' + #userId"
+    )
     @Transactional
     public OrderResponse placeOrder(
             CreateOrderRequest request,

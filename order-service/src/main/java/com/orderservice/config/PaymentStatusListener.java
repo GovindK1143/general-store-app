@@ -5,6 +5,7 @@ import java.util.Optional;
 import com.orderservice.model.Order;
 import com.orderservice.model.PaymentStatusMessage;
 import com.orderservice.repository.OrderRepository;
+import com.orderservice.service.OrderCacheService;
 import com.orderservice.service.ProductStockService;
 
 import org.springframework.beans.factory.annotation.Autowired;
@@ -23,6 +24,9 @@ public class PaymentStatusListener {
 
     @Autowired
     private ProductStockService productStockService;
+
+    @Autowired
+    private OrderCacheService orderCacheService;
 
     private static final int MAX_RETRIES = 5;
 
@@ -133,7 +137,7 @@ public class PaymentStatusListener {
             //
             // ProductStockService contains Resilience4j @Retry.
             //
-            // If all Resilience4j attempts fail, the exception
+            // *If all Resilience4j, attempts fail, the exception
             // is deliberately propagated to Kafka.
             // -----------------------------------------------------
 
@@ -220,6 +224,26 @@ public class PaymentStatusListener {
 
         orderRepository.save(
                 order
+        );
+
+
+        // =========================================================
+        // EVICT REDIS USER ORDER CACHE
+        // =========================================================
+        //
+        // Order status/payment status has changed.
+        // Therefore, the cached order history for this user
+        // must be removed.
+        //
+        // Example:
+        // userOrders::user:2
+        //
+        // The next GET /orders/user/2 will read the latest
+        // order information from MySQL and rebuild the cache.
+        // =========================================================
+
+        orderCacheService.evictUserOrders(
+                order.getUserId()
         );
 
 
