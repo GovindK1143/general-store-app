@@ -4,6 +4,7 @@ import java.time.LocalDateTime;
 import java.util.UUID;
 
 import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.cache.annotation.Cacheable;
 import org.springframework.kafka.core.KafkaTemplate;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
@@ -18,7 +19,11 @@ import com.paymentservice.repository.PaymentRepository;
 @Service
 public class PaymentService {
 
-    private static final String PAYMENT_STATUS_TOPIC = "payment.status.topic";
+    private static final String PAYMENT_STATUS_TOPIC =
+            "payment.status.topic";
+
+    private static final String PAYMENT_CACHE =
+            "paymentsByOrder";
 
     @Autowired
     private PaymentRepository paymentRepository;
@@ -27,16 +32,30 @@ public class PaymentService {
     private PaymentCreationService paymentCreationService;
 
     @Autowired
+    private PaymentCacheService paymentCacheService;
+
+    @Autowired
     private KafkaTemplate<String, PaymentStatusMessage> kafkaTemplate;
 
+
+    // =========================================================
+    // PROCESS PAYMENT
+    // =========================================================
+
     @Transactional
-    public PaymentResponse processPayment(PaymentRequest request) {
+    public PaymentResponse processPayment(
+            PaymentRequest request) {
 
         /*
          * Check whether a payment already exists for this order.
          */
-        Payment payment = paymentRepository.findByOrderId(request.getOrderId())
-                .orElse(null);
+        Payment payment =
+                paymentRepository
+                        .findByOrderId(
+                                request.getOrderId()
+                        )
+                        .orElse(null);
+
 
         /*
          * Existing successful payment.
@@ -44,12 +63,24 @@ public class PaymentService {
          * This is the normal idempotency path.
          */
         if (payment != null &&
-                "SUCCESS".equalsIgnoreCase(payment.getPaymentStatus())) {
+                "SUCCESS".equalsIgnoreCase(
+                        payment.getPaymentStatus()
+                )) {
+
+            /*
+             * Make sure Redis does not contain stale data.
+             */
+            paymentCacheService.evictPayment(
+                    request.getOrderId()
+            );
 
             publishPaymentStatus(payment);
 
-            return PaymentResponse.fromPayment(payment);
+            return PaymentResponse.fromPayment(
+                    payment
+            );
         }
+
 
         /*
          * Existing FAILED/PENDING payment.
@@ -58,27 +89,66 @@ public class PaymentService {
          */
         if (payment != null) {
 
-            payment.setAmount(request.getAmount());
+            payment.setAmount(
+                    request.getAmount()
+            );
 
-            if (Boolean.TRUE.equals(request.getSimulateFailure())) {
+            if (Boolean.TRUE.equals(
+                    request.getSimulateFailure()
+            )) {
 
-                payment.setPaymentStatus("FAILED");
-                payment.setTransactionId(null);
-                payment.setPaymentDate(LocalDateTime.now());
+                payment.setPaymentStatus(
+                        "FAILED"
+                );
+
+                payment.setTransactionId(
+                        null
+                );
+
+                payment.setPaymentDate(
+                        LocalDateTime.now()
+                );
 
             } else {
 
-                payment.setPaymentStatus("SUCCESS");
-                payment.setTransactionId(generateTransactionId());
-                payment.setPaymentDate(LocalDateTime.now());
+                payment.setPaymentStatus(
+                        "SUCCESS"
+                );
+
+                payment.setTransactionId(
+                        generateTransactionId()
+                );
+
+                payment.setPaymentDate(
+                        LocalDateTime.now()
+                );
             }
 
-            payment = paymentRepository.save(payment);
+
+            payment =
+                    paymentRepository.save(
+                            payment
+                    );
+
+
+            /*
+             * Database payment changed.
+             *
+             * Remove old Redis value so the next GET
+             * loads the latest payment from MySQL.
+             */
+            paymentCacheService.evictPayment(
+                    payment.getOrderId()
+            );
+
 
             publishPaymentStatus(payment);
 
-            return PaymentResponse.fromPayment(payment);
+            return PaymentResponse.fromPayment(
+                    payment
+            );
         }
+
 
         /*
          * No payment exists yet.
@@ -91,12 +161,13 @@ public class PaymentService {
          */
         try {
 
-            payment = paymentCreationService.createPayment(
-                    request.getOrderId(),
-                    request.getUserId(),
-                    request.getAmount(),
-                    request.getSimulateFailure()
-            );
+            payment =
+                    paymentCreationService.createPayment(
+                            request.getOrderId(),
+                            request.getUserId(),
+                            request.getAmount(),
+                            request.getSimulateFailure()
+                    );
 
         } catch (DataIntegrityViolationException exception) {
 
@@ -105,62 +176,147 @@ public class PaymentService {
              *
              * Read the payment that was created by that request.
              */
-            payment = paymentRepository
-                    .findByOrderId(request.getOrderId())
-                    .orElseThrow(() ->
-                            new IllegalStateException(
-                                    "Payment creation conflict for order ID: "
-                                            + request.getOrderId(),
-                                    exception
+            payment =
+                    paymentRepository
+                            .findByOrderId(
+                                    request.getOrderId()
                             )
-                    );
+                            .orElseThrow(() ->
+                                    new IllegalStateException(
+                                            "Payment creation conflict for order ID: "
+                                                    + request.getOrderId(),
+                                            exception
+                                    )
+                            );
         }
 
+
         /*
-         * Publish the payment record that exists in the database.
+         * A new payment now exists in the database.
+         *
+         * Evict any previously cached value for this order.
+         */
+        paymentCacheService.evictPayment(
+                payment.getOrderId()
+        );
+
+
+        /*
+         * Publish the payment record that exists
+         * in the database.
          */
         publishPaymentStatus(payment);
 
-        return PaymentResponse.fromPayment(payment);
+        return PaymentResponse.fromPayment(
+                payment
+        );
     }
 
-    public PaymentResponse getPaymentByOrderId(Long orderId) {
 
-        Payment payment = paymentRepository.findByOrderId(orderId)
-                .orElseThrow(() ->
-                        new RuntimeException(
-                                "Payment not found for order ID: " + orderId));
+    // =========================================================
+    // GET PAYMENT BY ORDER ID
+    // =========================================================
 
-        return PaymentResponse.fromPayment(payment);
+    @Cacheable(
+            value = PAYMENT_CACHE,
+            key = "'order:' + #orderId",
+            unless = "#result == null"
+    )
+    public PaymentResponse getPaymentByOrderId(
+            Long orderId) {
+
+        Payment payment =
+                paymentRepository
+                        .findByOrderId(orderId)
+                        .orElseThrow(() ->
+                                new RuntimeException(
+                                        "Payment not found for order ID: "
+                                                + orderId
+                                )
+                        );
+
+        return PaymentResponse.fromPayment(
+                payment
+        );
     }
 
-    public PaymentResponse getPaymentStatus(Long orderId) {
 
-        Payment payment = paymentRepository.findByOrderId(orderId)
-                .orElseThrow(() ->
-                        new RuntimeException(
-                                "Payment not found for order ID: " + orderId));
+    // =========================================================
+    // GET PAYMENT STATUS
+    // =========================================================
 
-        return PaymentResponse.fromPayment(payment);
+    @Cacheable(
+            value = PAYMENT_CACHE,
+            key = "'order:' + #orderId",
+            unless = "#result == null"
+    )
+    public PaymentResponse getPaymentStatus(
+            Long orderId) {
+
+        Payment payment =
+                paymentRepository
+                        .findByOrderId(orderId)
+                        .orElseThrow(() ->
+                                new RuntimeException(
+                                        "Payment not found for order ID: "
+                                                + orderId
+                                )
+                        );
+
+        return PaymentResponse.fromPayment(
+                payment
+        );
     }
 
-    private void publishPaymentStatus(Payment payment) {
 
-        PaymentStatusMessage message = new PaymentStatusMessage();
+    // =========================================================
+    // PUBLISH PAYMENT STATUS
+    // =========================================================
 
-        message.setOrderId(payment.getOrderId());
-        message.setUserId(payment.getUserId());
-        message.setAmount(payment.getAmount());
-        message.setPaymentStatus(payment.getPaymentStatus());
-        message.setTransactionId(payment.getTransactionId());
-        message.setPaymentDate(payment.getPaymentDate());
+    private void publishPaymentStatus(
+            Payment payment) {
+
+        PaymentStatusMessage message =
+                new PaymentStatusMessage();
+
+        message.setOrderId(
+                payment.getOrderId()
+        );
+
+        message.setUserId(
+                payment.getUserId()
+        );
+
+        message.setAmount(
+                payment.getAmount()
+        );
+
+        message.setPaymentStatus(
+                payment.getPaymentStatus()
+        );
+
+        message.setTransactionId(
+                payment.getTransactionId()
+        );
+
+        message.setPaymentDate(
+                payment.getPaymentDate()
+        );
+
 
         kafkaTemplate.send(
                 PAYMENT_STATUS_TOPIC,
-                String.valueOf(payment.getOrderId()),
+                String.valueOf(
+                        payment.getOrderId()
+                ),
                 message
         );
     }
+
+
+    // =========================================================
+    // GENERATE TRANSACTION ID
+    // =========================================================
 
     private String generateTransactionId() {
 
