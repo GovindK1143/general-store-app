@@ -15,22 +15,6 @@ public class UserService {
     @Autowired
     private UserRepository userRepository;
 
-    @Autowired
-    private UserCacheService userCacheService;
-
-    public User registerUser(User user) {
-
-        User savedUser = userRepository.save(user);
-
-        /*
-         * If the same email was previously cached,
-         * remove the stale value.
-         */
-        userCacheService.evictUser(user.getEmail());
-
-        return savedUser;
-    }
-
     @Cacheable(
             value = USER_CACHE,
             key = "#email",
