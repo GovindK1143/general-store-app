@@ -6,6 +6,7 @@ import com.orderservice.repository.OrderRepository;
 import com.orderservice.service.OrderCacheService;
 import com.orderservice.service.ProductStockService;
 
+import org.apache.kafka.common.TopicPartition;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.kafka.annotation.KafkaListener;
 import org.springframework.stereotype.Component;
@@ -29,7 +30,7 @@ public class PaymentStatusDltListener {
     @KafkaListener(
             topics = "payment.status.topic-dlt",
             groupId = "order-dlt-recovery-group",
-            containerFactory = "kafkaListenerContainerFactory"
+            containerFactory = "dltKafkaListenerContainerFactory"
     )
     @Transactional
     public void handleDltPaymentStatus(PaymentStatusMessage message) {

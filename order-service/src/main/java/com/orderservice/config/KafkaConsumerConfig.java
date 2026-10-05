@@ -4,10 +4,8 @@ import java.util.HashMap;
 import java.util.Map;
 
 import org.apache.kafka.clients.consumer.ConsumerConfig;
-import org.apache.kafka.clients.consumer.ConsumerRecord;
-import org.apache.kafka.clients.producer.ProducerConfig;
+import org.apache.kafka.common.TopicPartition;
 import org.apache.kafka.common.serialization.StringDeserializer;
-import org.apache.kafka.common.serialization.StringSerializer;
 
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.beans.factory.annotation.Value;
@@ -145,7 +143,7 @@ public class KafkaConsumerConfig {
 
 
     // =========================================================
-    // KAFKA LISTENER CONTAINER FACTORY
+    // NORMAL KAFKA LISTENER CONTAINER FACTORY
     // =========================================================
 
     @Bean
@@ -178,17 +176,20 @@ public class KafkaConsumerConfig {
         // If all Kafka-level retries are exhausted,
         // the failed message is published to a DLT.
         //
-        // Default destination:
+        // Explicit DLT:
         //
-        // payment.status.topic
-        //          ↓
-        // payment.status.topic.DLT
+        // payment.status.topic-dlt
         //
         // =====================================================
 
         DeadLetterPublishingRecoverer recoverer =
                 new DeadLetterPublishingRecoverer(
-                        kafkaTemplate
+                        kafkaTemplate,
+                        (record, exception) ->
+                                new TopicPartition(
+                                        "payment.status.topic-dlt",
+                                        record.partition()
+                                )
                 );
 
 
@@ -206,9 +207,9 @@ public class KafkaConsumerConfig {
         //
         // Initial attempt
         //      ↓
-        // Retry #1 after 1 second
+        // Retry #1
         //      ↓
-        // Retry #2 after 1 second
+        // Retry #2
         //      ↓
         // DLT
         //
@@ -230,6 +231,89 @@ public class KafkaConsumerConfig {
 
         factory.setCommonErrorHandler(
                 errorHandler
+        );
+
+
+        return factory;
+    }
+
+
+    // =========================================================
+    // DLT KAFKA LISTENER CONTAINER FACTORY
+    // =========================================================
+    //
+    // This factory is ONLY for the DLT listener.
+    //
+    // IMPORTANT:
+    //
+    // We intentionally DO NOT use
+    // DeadLetterPublishingRecoverer here.
+    //
+    // Otherwise, if DLT processing fails, the message could
+    // be published back to the same DLT and cause recursive
+    // DLT processing.
+    //
+    // =========================================================
+
+    @Bean
+    public ConcurrentKafkaListenerContainerFactory<
+            String,
+            PaymentStatusMessage>
+    dltKafkaListenerContainerFactory() {
+
+
+        ConcurrentKafkaListenerContainerFactory<
+                String,
+                PaymentStatusMessage>
+                factory =
+                new ConcurrentKafkaListenerContainerFactory<>();
+
+
+        // -----------------------------------------------------
+        // Consumer Factory
+        // -----------------------------------------------------
+
+        factory.setConsumerFactory(
+                consumerFactory()
+        );
+
+
+        // =====================================================
+        // DLT ERROR HANDLER
+        // =====================================================
+        //
+        // DLT messages get:
+        //
+        // Initial attempt
+        //      ↓
+        // Retry #1 after 1 second
+        //      ↓
+        // Retry #2 after 1 second
+        //      ↓
+        // Stop processing
+        //
+        // There is NO DLT recoverer here.
+        //
+        // Therefore, a failed DLT message will NOT be
+        // published back to payment.status.topic-dlt.
+        //
+        // =====================================================
+
+        DefaultErrorHandler dltErrorHandler =
+                new DefaultErrorHandler(
+                        new FixedBackOff(
+                                1000L,
+                                2L
+                        )
+                );
+
+
+        // -----------------------------------------------------
+        // Register DLT Error Handler
+        // -----------------------------------------------------
+
+        factory.setCommonErrorHandler(
+                dltErrorHandler
         );
 
 

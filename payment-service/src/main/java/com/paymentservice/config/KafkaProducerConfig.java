@@ -41,6 +41,40 @@ public class KafkaProducerConfig {
                 JsonSerializer.class
         );
 
+        // =====================================================
+        // KAFKA PRODUCER RELIABILITY
+        // =====================================================
+
+        /*
+         * Wait for acknowledgement from all in-sync replicas.
+         * This provides stronger durability than acks=1.
+         */
+        config.put(
+                ProducerConfig.ACKS_CONFIG,
+                "all"
+        );
+
+        /*
+         * Enable Kafka producer idempotence.
+         *
+         * Prevents duplicate records caused by producer retries.
+         */
+        config.put(
+                ProducerConfig.ENABLE_IDEMPOTENCE_CONFIG,
+                true
+        );
+
+        /*
+         * Allow the producer to retry transient failures.
+         *
+         * With idempotence enabled, Kafka safely handles
+         * producer retries without creating duplicate records.
+         */
+        config.put(
+                ProducerConfig.RETRIES_CONFIG,
+                Integer.MAX_VALUE
+        );
+
         return new DefaultKafkaProducerFactory<>(config);
     }
 
