@@ -2,11 +2,10 @@ package com.auth_service.login;
 
 import jakarta.validation.constraints.NotBlank;
 import jakarta.validation.constraints.Pattern;
-import jakarta.validation.constraints.Size;
 import lombok.Data;
 
 @Data
-public class MobileLoginRequest {
+public class VerifyOtpRequest {
 
     @NotBlank(message = "Mobile number is required")
     @Pattern(
@@ -15,11 +14,10 @@ public class MobileLoginRequest {
     )
     private String mobile;
 
-    @NotBlank(message = "Password is required")
-    @Size(
-            min = 8,
-            max = 100,
-            message = "Password must be between 8 and 100 characters"
+    @NotBlank(message = "OTP is required")
+    @Pattern(
+            regexp = "^[0-9]{6}$",
+            message = "OTP must be exactly 6 digits"
     )
-    private String password;
+    private String otp;
 }

@@ -7,12 +7,12 @@ import jakarta.validation.Valid;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.*;
-import java.util.Map;
-
 import org.springframework.security.core.Authentication;
 
 import com.auth_service.login.LoginRequest;
 import com.auth_service.login.RegisterRequest;
+import com.auth_service.login.OtpRequest;
+import com.auth_service.login.VerifyOtpRequest;
 import com.auth_service.model.User;
 import com.auth_service.response.LoginResponse;
 import com.auth_service.response.UserResponse;
@@ -99,39 +99,25 @@ public class AuthController {
 
     @PostMapping("/send-otp")
     public ResponseEntity<?> sendOtp(
-            @RequestBody Map<String, String> body) {
+            @Valid @RequestBody OtpRequest request) {
 
-        String mobile = body.get("mobile");
-
-        if (mobile == null || mobile.isBlank()) {
-
-            return ResponseEntity
-                    .badRequest()
-                    .body(Map.of(
-                            "success", false,
-                            "message",
-                            "Mobile number is required"
-                    ));
-        }
-
-        otpService.sendOtp(mobile);
+        otpService.sendOtp(request.getMobile());
 
         return ResponseEntity.ok(
                 Map.of(
                         "success", true,
-                        "message",
-                        "OTP sent to mobile"
+                        "message", "OTP sent to mobile"
                 )
         );
     }
 
     @PostMapping("/verify-otp")
     public ResponseEntity<?> verifyOtp(
-            @RequestBody Map<String, String> body) {
+            @Valid @RequestBody VerifyOtpRequest request) {
 
         User user = otpService.verifyOtp(
-                body.get("mobile"),
-                body.get("otp")
+                request.getMobile(),
+                request.getOtp()
         );
 
         if (user == null) {
