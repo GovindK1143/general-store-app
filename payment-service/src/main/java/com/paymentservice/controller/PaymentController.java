@@ -1,17 +1,13 @@
 package com.paymentservice.controller;
 
-import java.util.Map;
-
-import org.springframework.http.ResponseEntity;
-import org.springframework.security.core.Authentication;
-import org.springframework.web.bind.annotation.*;
-
 import com.paymentservice.dto.PaymentRequest;
 import com.paymentservice.dto.PaymentResponse;
 import com.paymentservice.service.PaymentService;
-
+import jakarta.servlet.http.HttpServletRequest;
 import jakarta.validation.Valid;
 import lombok.RequiredArgsConstructor;
+import org.springframework.http.ResponseEntity;
+import org.springframework.web.bind.annotation.*;
 
 @RestController
 @RequestMapping("/payments")
@@ -26,10 +22,20 @@ public class PaymentController {
     @PostMapping("/process")
     public ResponseEntity<PaymentResponse> processPayment(
             @Valid @RequestBody PaymentRequest request,
-            Authentication authentication) {
+            HttpServletRequest httpRequest) {
+
+        Long authenticatedUserId =
+                (Long) httpRequest.getAttribute("userId");
+
+        String role =
+                (String) httpRequest.getAttribute("role");
 
         return ResponseEntity.ok(
-                paymentService.processPayment(request)
+                paymentService.processPayment(
+                        request,
+                        authenticatedUserId,
+                        role
+                )
         );
     }
 
@@ -38,10 +44,21 @@ public class PaymentController {
      */
     @GetMapping("/order/{orderId}")
     public ResponseEntity<PaymentResponse> getPaymentByOrderId(
-            @PathVariable Long orderId) {
+            @PathVariable Long orderId,
+            HttpServletRequest httpRequest) {
+
+        Long authenticatedUserId =
+                (Long) httpRequest.getAttribute("userId");
+
+        String role =
+                (String) httpRequest.getAttribute("role");
 
         return ResponseEntity.ok(
-                paymentService.getPaymentByOrderId(orderId)
+                paymentService.getPaymentByOrderId(
+                        orderId,
+                        authenticatedUserId,
+                        role
+                )
         );
     }
 
@@ -50,10 +67,21 @@ public class PaymentController {
      */
     @GetMapping("/status/{orderId}")
     public ResponseEntity<PaymentResponse> getPaymentStatus(
-            @PathVariable Long orderId) {
+            @PathVariable Long orderId,
+            HttpServletRequest httpRequest) {
+
+        Long authenticatedUserId =
+                (Long) httpRequest.getAttribute("userId");
+
+        String role =
+                (String) httpRequest.getAttribute("role");
 
         return ResponseEntity.ok(
-                paymentService.getPaymentStatus(orderId)
+                paymentService.getPaymentStatus(
+                        orderId,
+                        authenticatedUserId,
+                        role
+                )
         );
     }
 }

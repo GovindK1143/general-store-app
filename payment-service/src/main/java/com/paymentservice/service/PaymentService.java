@@ -1,20 +1,20 @@
 package com.paymentservice.service;
 
-import java.time.LocalDateTime;
-import java.util.UUID;
-
-import org.springframework.beans.factory.annotation.Autowired;
-import org.springframework.cache.annotation.Cacheable;
-import org.springframework.kafka.core.KafkaTemplate;
-import org.springframework.stereotype.Service;
-import org.springframework.transaction.annotation.Transactional;
-import org.springframework.dao.DataIntegrityViolationException;
-
 import com.paymentservice.dto.PaymentRequest;
 import com.paymentservice.dto.PaymentResponse;
 import com.paymentservice.model.Payment;
 import com.paymentservice.model.PaymentStatusMessage;
 import com.paymentservice.repository.PaymentRepository;
+import jakarta.transaction.Transactional;
+import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.cache.annotation.Cacheable;
+import org.springframework.dao.DataIntegrityViolationException;
+import org.springframework.kafka.core.KafkaTemplate;
+import org.springframework.security.access.AccessDeniedException;
+import org.springframework.stereotype.Service;
+
+import java.time.LocalDateTime;
+import java.util.UUID;
 
 @Service
 public class PaymentService {
@@ -44,17 +44,34 @@ public class PaymentService {
 
     @Transactional
     public PaymentResponse processPayment(
-            PaymentRequest request) {
+            PaymentRequest request,
+            Long authenticatedUserId,
+            String role) {
 
-        /*
-         * Check whether a payment already exists for this order.
-         */
+        validateAuthenticatedUser(
+                request.getUserId(),
+                authenticatedUserId,
+                role
+        );
+
         Payment payment =
                 paymentRepository
-                        .findByOrderId(
-                                request.getOrderId()
-                        )
+                        .findByOrderId(request.getOrderId())
                         .orElse(null);
+
+
+        /*
+         * If a payment already exists, make sure a CUSTOMER
+         * is allowed to access that payment.
+         */
+        if (payment != null) {
+
+            validatePaymentOwnership(
+                    payment,
+                    authenticatedUserId,
+                    role
+            );
+        }
 
 
         /*
@@ -67,9 +84,6 @@ public class PaymentService {
                         payment.getPaymentStatus()
                 )) {
 
-            /*
-             * Make sure Redis does not contain stale data.
-             */
             paymentCacheService.evictPayment(
                     request.getOrderId()
             );
@@ -124,23 +138,14 @@ public class PaymentService {
                 );
             }
 
-
             payment =
                     paymentRepository.save(
                             payment
                     );
 
-
-            /*
-             * Database payment changed.
-             *
-             * Remove old Redis value so the next GET
-             * loads the latest payment from MySQL.
-             */
             paymentCacheService.evictPayment(
                     payment.getOrderId()
             );
-
 
             publishPaymentStatus(payment);
 
@@ -155,9 +160,8 @@ public class PaymentService {
          *
          * Try to create the payment in a separate transaction.
          *
-         * If another concurrent request creates the payment first,
-         * the database UNIQUE constraint on order_id will reject
-         * this insert.
+         * The database UNIQUE constraint on order_id protects
+         * against concurrent payment creation.
          */
         try {
 
@@ -173,8 +177,6 @@ public class PaymentService {
 
             /*
              * Another concurrent request created the payment first.
-             *
-             * Read the payment that was created by that request.
              */
             payment =
                     paymentRepository
@@ -188,23 +190,26 @@ public class PaymentService {
                                             exception
                                     )
                             );
+
+            /*
+             * Make sure the authenticated CUSTOMER can access
+             * the payment that won the race.
+             */
+            validatePaymentOwnership(
+                    payment,
+                    authenticatedUserId,
+                    role
+            );
         }
 
 
         /*
          * A new payment now exists in the database.
-         *
-         * Evict any previously cached value for this order.
          */
         paymentCacheService.evictPayment(
                 payment.getOrderId()
         );
 
-
-        /*
-         * Publish the payment record that exists
-         * in the database.
-         */
         publishPaymentStatus(payment);
 
         return PaymentResponse.fromPayment(
@@ -219,11 +224,15 @@ public class PaymentService {
 
     @Cacheable(
             value = PAYMENT_CACHE,
-            key = "'order:' + #orderId",
+            key = "'order:' + #orderId + ':user:' + #authenticatedUserId + ':role:' + #role",
             unless = "#result == null"
     )
     public PaymentResponse getPaymentByOrderId(
-            Long orderId) {
+            Long orderId,
+            Long authenticatedUserId,
+            String role) {
+
+        validateOrderId(orderId);
 
         Payment payment =
                 paymentRepository
@@ -234,6 +243,12 @@ public class PaymentService {
                                                 + orderId
                                 )
                         );
+
+        validatePaymentOwnership(
+                payment,
+                authenticatedUserId,
+                role
+        );
 
         return PaymentResponse.fromPayment(
                 payment
@@ -247,11 +262,15 @@ public class PaymentService {
 
     @Cacheable(
             value = PAYMENT_CACHE,
-            key = "'order:' + #orderId",
+            key = "'order:' + #orderId + ':user:' + #authenticatedUserId + ':role:' + #role",
             unless = "#result == null"
     )
     public PaymentResponse getPaymentStatus(
-            Long orderId) {
+            Long orderId,
+            Long authenticatedUserId,
+            String role) {
+
+        validateOrderId(orderId);
 
         Payment payment =
                 paymentRepository
@@ -263,9 +282,108 @@ public class PaymentService {
                                 )
                         );
 
+        validatePaymentOwnership(
+                payment,
+                authenticatedUserId,
+                role
+        );
+
         return PaymentResponse.fromPayment(
                 payment
         );
+    }
+
+
+    // =========================================================
+    // AUTHENTICATED USER VALIDATION
+    // =========================================================
+
+    private void validateAuthenticatedUser(
+            Long requestUserId,
+            Long authenticatedUserId,
+            String role) {
+
+        if (authenticatedUserId == null) {
+
+            throw new AccessDeniedException(
+                    "Authenticated user ID is missing"
+            );
+        }
+
+        /*
+         * ADMIN can process payments for any user.
+         */
+        if ("ADMIN".equalsIgnoreCase(role)) {
+            return;
+        }
+
+        /*
+         * CUSTOMER can process only their own payment.
+         */
+        if ("CUSTOMER".equalsIgnoreCase(role)) {
+
+            if (!authenticatedUserId.equals(requestUserId)) {
+
+                throw new AccessDeniedException(
+                        "You are not authorized to process payment for another user"
+                );
+            }
+
+            return;
+        }
+
+        throw new AccessDeniedException(
+                "Unauthorized role"
+        );
+    }
+
+
+    // =========================================================
+    // PAYMENT OWNERSHIP VALIDATION
+    // =========================================================
+
+    private void validatePaymentOwnership(
+            Payment payment,
+            Long authenticatedUserId,
+            String role) {
+
+        /*
+         * ADMIN can view/process any payment.
+         */
+        if ("ADMIN".equalsIgnoreCase(role)) {
+            return;
+        }
+
+        /*
+         * CUSTOMER can access only their own payment.
+         */
+        if ("CUSTOMER".equalsIgnoreCase(role)
+                && authenticatedUserId != null
+                && authenticatedUserId.equals(
+                payment.getUserId()
+        )) {
+
+            return;
+        }
+
+        throw new AccessDeniedException(
+                "You are not authorized to access this payment"
+        );
+    }
+
+
+    // =========================================================
+    // ORDER ID VALIDATION
+    // =========================================================
+
+    private void validateOrderId(Long orderId) {
+
+        if (orderId == null || orderId <= 0) {
+
+            throw new IllegalArgumentException(
+                    "Order ID must be greater than zero"
+            );
+        }
     }
 
 
@@ -302,7 +420,6 @@ public class PaymentService {
         message.setPaymentDate(
                 payment.getPaymentDate()
         );
-
 
         kafkaTemplate.send(
                 PAYMENT_STATUS_TOPIC,

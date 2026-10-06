@@ -31,9 +31,17 @@ public class PaymentCacheService {
 
         if (cache != null) {
 
-            cache.evict(
-                    "order:" + orderId
-            );
+            /*
+             * Payment cache keys include authenticated
+             * user ID and role.
+             *
+             * Therefore, we cannot evict a single key using
+             * only orderId.
+             *
+             * Clear the payment cache so no stale payment
+             * response remains after a payment update.
+             */
+            cache.clear();
         }
     }
 }
