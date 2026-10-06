@@ -7,9 +7,11 @@ import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.*;
 
+import com.productservice.dto.StockUpdateBatchRequest;
 import com.productservice.model.Product;
 import com.productservice.service.ProductService;
-import com.productservice.dto.StockUpdateBatchRequest;
+
+import jakarta.validation.Valid;
 
 @RestController
 @RequestMapping("/products")
@@ -18,14 +20,22 @@ public class ProductController {
     @Autowired
     private ProductService productService;
 
+    // =========================================================
+    // ADD PRODUCT
+    // =========================================================
+
     @PostMapping("/add")
     public ResponseEntity<Product> addProduct(
-            @RequestBody Product product) {
+            @Valid @RequestBody Product product) {
 
         return ResponseEntity.ok(
                 productService.addProduct(product)
         );
     }
+
+    // =========================================================
+    // GET PRODUCT BY ID
+    // =========================================================
 
     @GetMapping("/id/{productId}")
     public ResponseEntity<Product> getProductById(
@@ -36,6 +46,10 @@ public class ProductController {
         );
     }
 
+    // =========================================================
+    // GET ALL ACTIVE PRODUCTS
+    // =========================================================
+
     @GetMapping("/all")
     public ResponseEntity<List<Product>> getAllProducts() {
 
@@ -43,6 +57,10 @@ public class ProductController {
                 productService.getAllProducts()
         );
     }
+
+    // =========================================================
+    // GET PRODUCTS BY CATEGORY
+    // =========================================================
 
     @GetMapping("/category/{category}")
     public ResponseEntity<List<Product>> getProductsByCategory(
@@ -53,6 +71,10 @@ public class ProductController {
         );
     }
 
+    // =========================================================
+    // SEARCH PRODUCTS
+    // =========================================================
+
     @GetMapping("/search")
     public ResponseEntity<List<Product>> searchProducts(
             @RequestParam String keyword) {
@@ -61,6 +83,10 @@ public class ProductController {
                 productService.searchProducts(keyword)
         );
     }
+
+    // =========================================================
+    // UPDATE STOCK
+    // =========================================================
 
     @PostMapping("/update-stock")
     public ResponseEntity<String> updateStock(
@@ -79,9 +105,13 @@ public class ProductController {
         );
     }
 
+    // =========================================================
+    // UPDATE STOCK - BATCH
+    // =========================================================
+
     @PostMapping("/update-stock/batch")
     public ResponseEntity<String> updateStockBatch(
-            @RequestBody StockUpdateBatchRequest request) {
+            @Valid @RequestBody StockUpdateBatchRequest request) {
 
         productService.updateStockBatch(request);
 
@@ -90,7 +120,10 @@ public class ProductController {
         );
     }
 
-    //Update Product
+    // =========================================================
+    // UPDATE PRODUCT
+    // =========================================================
+
     @PutMapping("/{productId}")
     public ResponseEntity<Product> updateProduct(
             @PathVariable Long productId,
@@ -101,7 +134,10 @@ public class ProductController {
         );
     }
 
-    //Activate/Deactivate Product
+    // =========================================================
+    // ACTIVATE / DEACTIVATE PRODUCT
+    // =========================================================
+
     @PatchMapping("/{productId}/status")
     public ResponseEntity<Product> updateProductStatus(
             @PathVariable Long productId,
