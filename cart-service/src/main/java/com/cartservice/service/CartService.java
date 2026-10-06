@@ -5,6 +5,7 @@ import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
 
+import feign.FeignException;
 import org.springframework.cache.annotation.CacheEvict;
 import org.springframework.cache.annotation.CachePut;
 import org.springframework.cache.annotation.Cacheable;
@@ -460,7 +461,6 @@ public class CartService {
     private ProductResponse getProduct(Long productId) {
 
         if (productId == null) {
-
             throw new CartException(
                     "Product ID is required"
             );
@@ -485,6 +485,18 @@ public class CartService {
         } catch (CartException exception) {
 
             throw exception;
+
+        } catch (FeignException.NotFound exception) {
+
+            log.warn(
+                    "Product not found. productId={}",
+                    productId
+            );
+
+            throw new CartNotFoundException(
+                    "Product not found with ID: "
+                            + productId
+            );
 
         } catch (Exception exception) {
 

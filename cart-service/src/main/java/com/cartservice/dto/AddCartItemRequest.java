@@ -2,6 +2,7 @@ package com.cartservice.dto;
 
 import jakarta.validation.constraints.Min;
 import jakarta.validation.constraints.NotNull;
+import jakarta.validation.constraints.Positive;
 import lombok.AllArgsConstructor;
 import lombok.Data;
 import lombok.NoArgsConstructor;
@@ -12,6 +13,7 @@ import lombok.NoArgsConstructor;
 public class AddCartItemRequest {
 
     @NotNull(message = "Product ID is required")
+    @Positive(message = "Product ID must be greater than zero")
     private Long productId;
 
     @NotNull(message = "Quantity is required")
