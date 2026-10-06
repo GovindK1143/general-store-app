@@ -7,8 +7,17 @@ spring:
 
 eureka:
   instance:
-    instance-id:  ${spring.application.name}:${server.port}
+    instance-id: ${spring.application.name}:${server.port}
     prefer-ip-address: true
   client:
     register-with-eureka: false
     fetch-registry: false
+
+management:
+  endpoints:
+    web:
+      exposure:
+        include: health,info,metrics
+  endpoint:
+    health:
+      show-details: when-authorized

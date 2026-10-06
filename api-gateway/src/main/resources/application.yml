@@ -90,8 +90,10 @@ management:
   endpoints:
     web:
       exposure:
-        include: "*"
+        include: health,info,metrics,gateway
 
   endpoint:
     gateway:
       enabled: true
+    health:
+      show-details: when-authorized
