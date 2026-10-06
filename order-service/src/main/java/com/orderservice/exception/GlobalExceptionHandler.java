@@ -14,6 +14,10 @@ import feign.FeignException;
 @RestControllerAdvice
 public class GlobalExceptionHandler {
 
+    // =========================================================
+    // ORDER NOT FOUND
+    // =========================================================
+
     @ExceptionHandler(OrderNotFoundException.class)
     public ResponseEntity<Map<String, Object>> handleOrderNotFound(
             OrderNotFoundException exception) {
@@ -23,6 +27,10 @@ public class GlobalExceptionHandler {
                 exception.getMessage()
         );
     }
+
+    // =========================================================
+    // INVALID ORDER
+    // =========================================================
 
     @ExceptionHandler(InvalidOrderException.class)
     public ResponseEntity<Map<String, Object>> handleInvalidOrder(
@@ -34,22 +42,39 @@ public class GlobalExceptionHandler {
         );
     }
 
+    // =========================================================
+    // VALIDATION ERROR
+    // =========================================================
+
     @ExceptionHandler(MethodArgumentNotValidException.class)
     public ResponseEntity<Map<String, Object>> handleValidation(
             MethodArgumentNotValidException exception) {
 
-        String message = exception.getBindingResult()
-                .getFieldErrors()
-                .stream()
-                .findFirst()
-                .map(error -> error.getDefaultMessage())
-                .orElse("Invalid request");
+        Map<String, String> errors = new HashMap<>();
 
-        return buildResponse(
-                HttpStatus.BAD_REQUEST,
-                message
-        );
+        exception.getBindingResult()
+                .getFieldErrors()
+                .forEach(error ->
+                        errors.put(
+                                error.getField(),
+                                error.getDefaultMessage()
+                        )
+                );
+
+        Map<String, Object> response = new HashMap<>();
+
+        response.put("success", false);
+        response.put("message", "Validation failed");
+        response.put("errors", errors);
+
+        return ResponseEntity
+                .status(HttpStatus.BAD_REQUEST)
+                .body(response);
     }
+
+    // =========================================================
+    // FEIGN - RESOURCE NOT FOUND
+    // =========================================================
 
     @ExceptionHandler(FeignException.NotFound.class)
     public ResponseEntity<Map<String, Object>> handleFeignNotFound(
@@ -61,6 +86,10 @@ public class GlobalExceptionHandler {
         );
     }
 
+    // =========================================================
+    // FEIGN - DOWNSTREAM SERVICE ERROR
+    // =========================================================
+
     @ExceptionHandler(FeignException.class)
     public ResponseEntity<Map<String, Object>> handleFeignException(
             FeignException exception) {
@@ -71,6 +100,10 @@ public class GlobalExceptionHandler {
         );
     }
 
+    // =========================================================
+    // GENERIC ERROR
+    // =========================================================
+
     @ExceptionHandler(Exception.class)
     public ResponseEntity<Map<String, Object>> handleGenericException(
             Exception exception) {
@@ -80,6 +113,10 @@ public class GlobalExceptionHandler {
                 exception.getMessage()
         );
     }
+
+    // =========================================================
+    // COMMON RESPONSE
+    // =========================================================
 
     private ResponseEntity<Map<String, Object>> buildResponse(
             HttpStatus status,
