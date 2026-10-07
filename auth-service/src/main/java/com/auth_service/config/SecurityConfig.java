@@ -38,7 +38,9 @@ public class SecurityConfig {
                                 "/auth/login",
                                 "/auth/send-otp",
                                 "/auth/verify-otp",
-                                "/actuator/health"
+                                "/actuator/health",
+                                "/swagger-ui/**",
+                                "/v3/api-docs/**"
                         ).permitAll()
 
                         .requestMatchers(

@@ -27,6 +27,15 @@ public class SecurityConfig {
 
                 .authorizeHttpRequests(auth -> auth
 
+
+                        // ==========================================
+                        // SWAGGER / OPENAPI
+                        // ==========================================
+                        .requestMatchers(
+                                "/swagger-ui/**",
+                                "/v3/api-docs/**"
+                        ).permitAll()
+
                         // ==========================================
                         // CUSTOMER + ADMIN
                         // ==========================================

@@ -30,10 +30,24 @@ public class SecurityConfig {
 
                 .authorizeHttpRequests(auth -> auth
 
+                        // ==========================================
+                        // ACTUATOR
+                        // ==========================================
                         .requestMatchers(
                                 "/actuator/**"
                         ).permitAll()
 
+                        // ==========================================
+                        // SWAGGER / OPENAPI
+                        // ==========================================
+                        .requestMatchers(
+                                "/swagger-ui/**",
+                                "/v3/api-docs/**"
+                        ).permitAll()
+
+                        // ==========================================
+                        // CUSTOMER ONLY
+                        // ==========================================
                         .requestMatchers(
                                 HttpMethod.GET,
                                 "/cart"
@@ -64,6 +78,9 @@ public class SecurityConfig {
                                 "/cart/checkout"
                         ).hasRole("CUSTOMER")
 
+                        // ==========================================
+                        // EVERYTHING ELSE
+                        // ==========================================
                         .anyRequest()
                         .authenticated()
                 )

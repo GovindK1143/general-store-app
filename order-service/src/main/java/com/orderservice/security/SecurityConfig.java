@@ -23,35 +23,52 @@ public class SecurityConfig {
 
                 .authorizeHttpRequests(auth -> auth
 
-                        // CUSTOMER and ADMIN can place orders
+                        // ==========================================
+                        // SWAGGER / OPENAPI
+                        // ==========================================
+                        .requestMatchers(
+                                "/swagger-ui/**",
+                                "/v3/api-docs/**"
+                        ).permitAll()
+
+                        // ==========================================
+                        // CUSTOMER + ADMIN
+                        // ==========================================
                         .requestMatchers(
                                 HttpMethod.POST,
                                 "/orders/place"
                         ).hasAnyRole("CUSTOMER", "ADMIN")
 
-                        // Only ADMIN can view all orders
+                        // ==========================================
+                        // ADMIN ONLY
+                        // ==========================================
                         .requestMatchers(
                                 HttpMethod.GET,
                                 "/orders/all"
                         ).hasRole("ADMIN")
 
-                        // CUSTOMER and ADMIN can view user orders
+                        // ==========================================
+                        // CUSTOMER + ADMIN
+                        // ==========================================
                         .requestMatchers(
                                 HttpMethod.GET,
                                 "/orders/user/**"
                         ).hasAnyRole("CUSTOMER", "ADMIN")
 
-                        // CUSTOMER and ADMIN can check order status
                         .requestMatchers(
                                 HttpMethod.GET,
                                 "/orders/*/status"
                         ).hasAnyRole("CUSTOMER", "ADMIN")
 
-                        // Any other order endpoint requires authentication
+                        // ==========================================
+                        // OTHER ORDER ENDPOINTS
+                        // ==========================================
                         .requestMatchers("/orders/**")
                         .authenticated()
 
-                        // Non-order endpoints
+                        // ==========================================
+                        // NON-ORDER ENDPOINTS
+                        // ==========================================
                         .anyRequest()
                         .permitAll()
                 )

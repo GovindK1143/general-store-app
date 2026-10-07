@@ -25,9 +25,24 @@ public class SecurityConfig {
 
                 .authorizeHttpRequests(auth -> auth
 
+                        // ==========================================
+                        // ACTUATOR
+                        // ==========================================
                         .requestMatchers("/actuator/health")
                         .permitAll()
 
+                        // ==========================================
+                        // SWAGGER / OPENAPI
+                        // ==========================================
+                        .requestMatchers(
+                                "/swagger-ui/**",
+                                "/v3/api-docs/**"
+                        )
+                        .permitAll()
+
+                        // ==========================================
+                        // CUSTOMER + ADMIN
+                        // ==========================================
                         .requestMatchers(
                                 HttpMethod.POST,
                                 "/payments/process"
