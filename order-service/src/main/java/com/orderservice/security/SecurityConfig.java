@@ -60,6 +60,11 @@ public class SecurityConfig {
                                 "/orders/*/status"
                         ).hasAnyRole("CUSTOMER", "ADMIN")
 
+                        .requestMatchers(
+                                HttpMethod.POST,
+                                "/orders/*/retry-payment"
+                        ).hasRole("CUSTOMER")
+
                         // ==========================================
                         // OTHER ORDER ENDPOINTS
                         // ==========================================

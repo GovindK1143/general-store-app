@@ -52,6 +52,11 @@ public class Order {
     @Column(name = "order_date", nullable = false)
     private LocalDateTime orderDate;
 
+    // Time of the most recent payment-processing attempt.
+    // Null means no attempt has been recorded in this field yet.
+    @Column(name = "last_payment_attempt_at")
+    private LocalDateTime lastPaymentAttemptAt;
+
     @Column(name = "order_status", nullable = false, length = 30)
     private String orderStatus;
 

@@ -1,3 +1,4 @@
+
 package com.cartservice.repository;
 
 import com.cartservice.model.CartItem;
@@ -10,4 +11,6 @@ import java.util.Optional;
 public interface CartItemRepository extends JpaRepository<CartItem, Long> {
 
     Optional<CartItem> findByCartIdAndProductId(Long cartId, Long productId);
+
+    Optional<CartItem> findByIdAndCart_Id(Long id, Long cartId);
 }

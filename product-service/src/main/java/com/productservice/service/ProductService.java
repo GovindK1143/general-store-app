@@ -6,13 +6,11 @@ import java.util.HashSet;
 import java.util.List;
 import java.util.Set;
 
-import com.productservice.model.StockUpdateStatus;
 import org.springframework.beans.factory.annotation.Autowired;
-
 import org.springframework.cache.Cache;
 import org.springframework.cache.CacheManager;
-import org.springframework.cache.annotation.Cacheable;
 import org.springframework.cache.annotation.CacheEvict;
+import org.springframework.cache.annotation.Cacheable;
 import org.springframework.cache.annotation.Caching;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
@@ -22,6 +20,7 @@ import com.productservice.dto.StockUpdateItem;
 import com.productservice.exception.InsufficientStockException;
 import com.productservice.exception.ProductNotFoundException;
 import com.productservice.model.Product;
+import com.productservice.model.StockUpdateStatus;
 import com.productservice.model.StockUpdateTransaction;
 import com.productservice.repository.ProductRepository;
 import com.productservice.repository.StockUpdateTransactionRepository;
@@ -38,13 +37,12 @@ public class ProductService {
     @Autowired
     private CacheManager cacheManager;
 
-
     // =========================================================
     // ADD PRODUCT
     // =========================================================
 
     @Caching(evict = {
-            @CacheEvict(value = "productList", key = "'all'"),
+            @CacheEvict(value = "productList", allEntries = true),
             @CacheEvict(value = "productCategory", allEntries = true),
             @CacheEvict(value = "productSearch", allEntries = true)
     })
@@ -58,11 +56,19 @@ public class ProductService {
             product.setActive(true);
         }
 
+        // Homepage configuration defaults.
+        if (product.getFeatured() == null) {
+            product.setFeatured(false);
+        }
+
+        if (product.getFeaturedOrder() == null) {
+            product.setFeaturedOrder(0);
+        }
+
         validateProduct(product);
 
         return productRepository.save(product);
     }
-
 
     // =========================================================
     // GET ALL ACTIVE PRODUCTS
@@ -70,10 +76,27 @@ public class ProductService {
 
     @Cacheable(value = "productList", key = "'all'")
     public List<Product> getAllProducts() {
-
         return productRepository.findByActiveTrue();
     }
 
+    // =========================================================
+    // GET DISTINCT CATEGORIES WITH ACTIVE PRODUCTS
+    // Kept uncached until RedisConfig has been reviewed.
+    // =========================================================
+
+    public List<String> getActiveCategories() {
+        return productRepository.findDistinctActiveCategories();
+    }
+
+    // =========================================================
+    // GET FEATURED PRODUCTS FOR QUICKMART HOMEPAGE
+    // Kept uncached until RedisConfig has been reviewed.
+    // =========================================================
+
+    public List<Product> getFeaturedProducts() {
+        return productRepository
+                .findByActiveTrueAndFeaturedTrueOrderByFeaturedOrderAscNameAsc();
+    }
 
     // =========================================================
     // GET PRODUCTS BY CATEGORY
@@ -81,11 +104,9 @@ public class ProductService {
 
     @Cacheable(value = "productCategory", key = "#category.toLowerCase()")
     public List<Product> getProductsByCategory(String category) {
-
         return productRepository
                 .findByCategoryIgnoreCaseAndActiveTrue(category);
     }
-
 
     // =========================================================
     // SEARCH PRODUCTS
@@ -96,29 +117,24 @@ public class ProductService {
             key = "#keyword.trim().toLowerCase()"
     )
     public List<Product> searchProducts(String keyword) {
-
         return productRepository
                 .findByNameContainingIgnoreCaseAndActiveTrue(keyword);
     }
 
-
     // =========================================================
     // GET PRODUCT BY ID
     // =========================================================
+
     @Cacheable(value = "products", key = "#productId")
     public Product getProductById(Long productId) {
 
         Product product = productRepository
                 .findById(productId)
-                .orElseThrow(() ->
-                        new ProductNotFoundException(
-                                "Product not found with ID: " + productId
-                        )
-                );
+                .orElseThrow(() -> new ProductNotFoundException(
+                        "Product not found with ID: " + productId
+                ));
 
-        // Customer should not be able to access inactive products
         if (!Boolean.TRUE.equals(product.getActive())) {
-
             throw new ProductNotFoundException(
                     "Product is currently unavailable"
             );
@@ -127,160 +143,78 @@ public class ProductService {
         return product;
     }
 
-
     // =========================================================
     // UPDATE PRODUCT
     // =========================================================
 
     @Caching(evict = {
             @CacheEvict(value = "products", key = "#productId"),
-            @CacheEvict(value = "productList", key = "'all'"),
+            @CacheEvict(value = "productList", allEntries = true),
             @CacheEvict(value = "productCategory", allEntries = true),
             @CacheEvict(value = "productSearch", allEntries = true)
     })
-    public Product updateProduct(
-            Long productId,
-            Product updatedProduct) {
+    public Product updateProduct(Long productId, Product updatedProduct) {
 
         Product existingProduct = productRepository
                 .findById(productId)
-                .orElseThrow(() ->
-                        new ProductNotFoundException(
-                                "Product not found with ID: " + productId
-                        )
-                );
-
-
-        // -----------------------------------------------------
-        // Update Name
-        // -----------------------------------------------------
+                .orElseThrow(() -> new ProductNotFoundException(
+                        "Product not found with ID: " + productId
+                ));
 
         if (updatedProduct.getName() != null) {
-
-            existingProduct.setName(
-                    updatedProduct.getName().trim()
-            );
+            existingProduct.setName(updatedProduct.getName().trim());
         }
-
-
-        // -----------------------------------------------------
-        // Update Brand
-        // -----------------------------------------------------
 
         if (updatedProduct.getBrand() != null) {
-
-            existingProduct.setBrand(
-                    updatedProduct.getBrand().trim()
-            );
+            existingProduct.setBrand(updatedProduct.getBrand().trim());
         }
-
-
-        // -----------------------------------------------------
-        // Update Category
-        // -----------------------------------------------------
 
         if (updatedProduct.getCategory() != null) {
-
-            existingProduct.setCategory(
-                    updatedProduct.getCategory().trim()
-            );
+            existingProduct.setCategory(updatedProduct.getCategory().trim());
         }
-
-
-        // -----------------------------------------------------
-        // Update Description
-        // -----------------------------------------------------
 
         if (updatedProduct.getDescription() != null) {
-
-            existingProduct.setDescription(
-                    updatedProduct.getDescription().trim()
-            );
+            existingProduct.setDescription(updatedProduct.getDescription().trim());
         }
-
-
-        // -----------------------------------------------------
-        // Update Image URL
-        // -----------------------------------------------------
 
         if (updatedProduct.getImageUrl() != null) {
-
-            existingProduct.setImageUrl(
-                    updatedProduct.getImageUrl().trim()
-            );
+            existingProduct.setImageUrl(updatedProduct.getImageUrl().trim());
         }
-
-
-        // -----------------------------------------------------
-        // Update Unit
-        // -----------------------------------------------------
 
         if (updatedProduct.getUnit() != null) {
-
-            existingProduct.setUnit(
-                    updatedProduct.getUnit().trim()
-            );
+            existingProduct.setUnit(updatedProduct.getUnit().trim());
         }
-
-
-        // -----------------------------------------------------
-        // Update MRP
-        // -----------------------------------------------------
 
         if (updatedProduct.getMrp() != null) {
-
-            existingProduct.setMrp(
-                    updatedProduct.getMrp()
-            );
+            existingProduct.setMrp(updatedProduct.getMrp());
         }
-
-
-        // -----------------------------------------------------
-        // Update Selling Price
-        // -----------------------------------------------------
 
         if (updatedProduct.getSellingPrice() != null) {
-
-            existingProduct.setSellingPrice(
-                    updatedProduct.getSellingPrice()
-            );
+            existingProduct.setSellingPrice(updatedProduct.getSellingPrice());
         }
-
-
-        // -----------------------------------------------------
-        // Update Stock
-        // -----------------------------------------------------
 
         if (updatedProduct.getStock() != null) {
-
-            existingProduct.setStock(
-                    updatedProduct.getStock()
-            );
+            existingProduct.setStock(updatedProduct.getStock());
         }
-
-
-        // -----------------------------------------------------
-        // Update Active Status
-        // -----------------------------------------------------
 
         if (updatedProduct.getActive() != null) {
-
-            existingProduct.setActive(
-                    updatedProduct.getActive()
-            );
+            existingProduct.setActive(updatedProduct.getActive());
         }
 
+        // Wrapper types (Boolean and Integer) let us distinguish an omitted
+        // field from an explicit false or zero in an update request.
+        if (updatedProduct.getFeatured() != null) {
+            existingProduct.setFeatured(updatedProduct.getFeatured());
+        }
 
-        // -----------------------------------------------------
-        // Validate complete product
-        // -----------------------------------------------------
+        if (updatedProduct.getFeaturedOrder() != null) {
+            existingProduct.setFeaturedOrder(updatedProduct.getFeaturedOrder());
+        }
 
         validateProduct(existingProduct);
 
-
         return productRepository.save(existingProduct);
     }
-
 
     // =========================================================
     // ACTIVATE / DEACTIVATE PRODUCT
@@ -288,36 +222,28 @@ public class ProductService {
 
     @Caching(evict = {
             @CacheEvict(value = "products", key = "#productId"),
-            @CacheEvict(value = "productList", key = "'all'"),
+            @CacheEvict(value = "productList", allEntries = true),
             @CacheEvict(value = "productCategory", allEntries = true),
             @CacheEvict(value = "productSearch", allEntries = true)
     })
-    public Product updateProductStatus(
-            Long productId,
-            Boolean active) {
+    public Product updateProductStatus(Long productId, Boolean active) {
 
         Product product = productRepository
                 .findById(productId)
-                .orElseThrow(() ->
-                        new ProductNotFoundException(
-                                "Product not found with ID: " + productId
-                        )
-                );
-
+                .orElseThrow(() -> new ProductNotFoundException(
+                        "Product not found with ID: " + productId
+                ));
 
         if (active == null) {
-
             throw new IllegalArgumentException(
                     "Active status must be true or false"
             );
         }
 
-
         product.setActive(active);
 
         return productRepository.save(product);
     }
-
 
     // =========================================================
     // UPDATE / REDUCE STOCK
@@ -325,60 +251,33 @@ public class ProductService {
 
     @Caching(evict = {
             @CacheEvict(value = "products", key = "#productId"),
-            @CacheEvict(value = "productList", key = "'all'"),
+            @CacheEvict(value = "productList", allEntries = true),
             @CacheEvict(value = "productCategory", allEntries = true),
             @CacheEvict(value = "productSearch", allEntries = true)
     })
-    public void updateStock(
-            Long productId,
-            int quantity) {
+    public void updateStock(Long productId, int quantity) {
 
         Product product = productRepository
                 .findById(productId)
-                .orElseThrow(() ->
-                        new ProductNotFoundException(
-                                "Product not found with ID: " + productId
-                        )
-                );
-
-
-        // -----------------------------------------------------
-        // Validate requested quantity
-        // -----------------------------------------------------
+                .orElseThrow(() -> new ProductNotFoundException(
+                        "Product not found with ID: " + productId
+                ));
 
         if (quantity <= 0) {
-
             throw new IllegalArgumentException(
                     "Quantity must be greater than zero"
             );
         }
 
-
-        // -----------------------------------------------------
-        // Check available stock
-        // -----------------------------------------------------
-
         if (product.getStock() < quantity) {
-
             throw new InsufficientStockException(
-                    "Insufficient stock. Available stock: "
-                            + product.getStock()
+                    "Insufficient stock. Available stock: " + product.getStock()
             );
         }
 
-
-        // -----------------------------------------------------
-        // Reduce stock
-        // -----------------------------------------------------
-
-        product.setStock(
-                product.getStock() - quantity
-        );
-
-
+        product.setStock(product.getStock() - quantity);
         productRepository.save(product);
     }
-
 
     // =========================================================
     // PRODUCT VALIDATION
@@ -386,98 +285,57 @@ public class ProductService {
 
     private void validateProduct(Product product) {
 
-
-        // -----------------------------------------------------
-        // Name
-        // -----------------------------------------------------
-
-        if (product.getName() == null ||
-                product.getName().trim().isEmpty()) {
-
-            throw new IllegalArgumentException(
-                    "Product name is required"
-            );
+        if (product.getName() == null || product.getName().trim().isEmpty()) {
+            throw new IllegalArgumentException("Product name is required");
         }
 
-
-        // -----------------------------------------------------
-        // Category
-        // -----------------------------------------------------
-
-        if (product.getCategory() == null ||
-                product.getCategory().trim().isEmpty()) {
-
-            throw new IllegalArgumentException(
-                    "Product category is required"
-            );
+        if (product.getCategory() == null || product.getCategory().trim().isEmpty()) {
+            throw new IllegalArgumentException("Product category is required");
         }
 
-
-        // -----------------------------------------------------
-        // MRP
-        // -----------------------------------------------------
-
-        if (product.getMrp() == null ||
-                product.getMrp() < 0) {
-
+        if (product.getMrp() == null || product.getMrp() < 0) {
             throw new IllegalArgumentException(
                     "MRP must be greater than or equal to zero"
             );
         }
 
-
-        // -----------------------------------------------------
-        // Selling Price
-        // -----------------------------------------------------
-
-        if (product.getSellingPrice() == null ||
-                product.getSellingPrice() < 0) {
-
+        if (product.getSellingPrice() == null || product.getSellingPrice() < 0) {
             throw new IllegalArgumentException(
                     "Selling price must be greater than or equal to zero"
             );
         }
 
-
-        // -----------------------------------------------------
-        // Selling Price cannot exceed MRP
-        // -----------------------------------------------------
-
         if (product.getSellingPrice() > product.getMrp()) {
-
             throw new IllegalArgumentException(
                     "Selling price cannot be greater than MRP"
             );
         }
 
-
-        // -----------------------------------------------------
-        // Stock
-        // -----------------------------------------------------
-
-        if (product.getStock() == null ||
-                product.getStock() < 0) {
-
-            throw new IllegalArgumentException(
-                    "Stock cannot be negative"
-            );
+        if (product.getStock() == null || product.getStock() < 0) {
+            throw new IllegalArgumentException("Stock cannot be negative");
         }
 
-
-        // -----------------------------------------------------
-        // Active
-        // -----------------------------------------------------
-
         if (product.getActive() == null) {
-
             product.setActive(true);
+        }
+
+        if (product.getFeatured() == null) {
+            product.setFeatured(false);
+        }
+
+        if (product.getFeaturedOrder() == null) {
+            product.setFeaturedOrder(0);
+        }
+
+        if (product.getFeaturedOrder() < 0) {
+            throw new IllegalArgumentException(
+                    "Featured order cannot be negative"
+            );
         }
     }
 
-
     // =========================================================
-    // BATCH UPDATE / REDUCE STOCK
-    // WITH IDEMPOTENCY
+    // BATCH UPDATE / REDUCE STOCK WITH IDEMPOTENCY
     // =========================================================
 
     @Transactional
@@ -497,159 +355,123 @@ public class ProductService {
 
         Long orderId = request.getOrderId();
 
-        /*
-         * Try to claim this order for stock processing.
-         *
-         * The database unique constraint on order_id guarantees that
-         * only one transaction can successfully claim the same order.
-         */
         int claimed = stockUpdateTransactionRepository.claimOrder(
                 orderId,
                 LocalDateTime.now()
         );
 
         if (claimed == 0) {
-
             StockUpdateTransaction existingTransaction =
                     stockUpdateTransactionRepository
                             .findByOrderId(orderId)
-                            .orElseThrow(() ->
-                                    new IllegalStateException(
-                                            "Stock update transaction already exists for orderId="
-                                                    + orderId));
+                            .orElseThrow(() -> new IllegalStateException(
+                                    "Stock update transaction already exists for orderId="
+                                            + orderId
+                            ));
 
-            /*
-             * If another transaction already completed the stock update,
-             * this request is a duplicate and can safely be ignored.
-             */
             if (existingTransaction.getStatus() == StockUpdateStatus.COMPLETED) {
-
                 return;
             }
 
-            /*
-             * Normally PROCESSING should not be visible here because the
-             * PROCESSING record and stock update happen in the same database
-             * transaction.
-             *
-             * If it is visible, it indicates an incomplete/stale transaction.
-             */
             throw new IllegalStateException(
-                    "Stock update is already being processed for orderId=" + orderId);
+                    "Stock update is already being processed for orderId=" + orderId
+            );
         }
 
-        /*
-         * Validate duplicate product IDs before modifying any stock.
-         */
         Set<Long> productIds = new HashSet<>();
 
         for (StockUpdateItem item : request.getItems()) {
-
             if (item == null) {
-                throw new IllegalArgumentException(
-                        "Stock update item cannot be null");
+                throw new IllegalArgumentException("Stock update item cannot be null");
             }
 
             if (item.getProductId() == null) {
-                throw new IllegalArgumentException(
-                        "Product ID is required");
+                throw new IllegalArgumentException("Product ID is required");
             }
 
             if (item.getQuantity() == null || item.getQuantity() <= 0) {
                 throw new IllegalArgumentException(
                         "Quantity must be greater than zero for productId="
-                                + item.getProductId());
+                                + item.getProductId()
+                );
             }
 
             if (!productIds.add(item.getProductId())) {
                 throw new IllegalArgumentException(
-                        "Duplicate product ID in stock update: "
-                                + item.getProductId());
+                        "Duplicate product ID in stock update: " + item.getProductId()
+                );
             }
         }
 
-        /*
-         * Load and validate ALL products before changing ANY stock.
-         */
         List<Product> productsToUpdate = new ArrayList<>();
 
         for (StockUpdateItem item : request.getItems()) {
-
             Product product = productRepository
                     .findById(item.getProductId())
-                    .orElseThrow(() ->
-                            new ProductNotFoundException(
-                                    "Product not found with ID: "
-                                            + item.getProductId()));
+                    .orElseThrow(() -> new ProductNotFoundException(
+                            "Product not found with ID: " + item.getProductId()
+                    ));
 
             if (!Boolean.TRUE.equals(product.getActive())) {
                 throw new ProductNotFoundException(
-                        "Product is currently unavailable: "
-                                + item.getProductId());
+                        "Product is currently unavailable: " + item.getProductId()
+                );
             }
 
             if (product.getStock() < item.getQuantity()) {
                 throw new InsufficientStockException(
-                        "Insufficient stock for product: "
-                                + product.getName()
-                                + ". Available: "
-                                + product.getStock()
-                                + ", requested: "
-                                + item.getQuantity());
+                        "Insufficient stock for product: " + product.getName()
+                                + ". Available: " + product.getStock()
+                                + ", requested: " + item.getQuantity()
+                );
             }
 
-            product.setStock(
-                    product.getStock() - item.getQuantity()
-            );
-
+            product.setStock(product.getStock() - item.getQuantity());
             productsToUpdate.add(product);
         }
 
-        /*
-         * Save all stock changes atomically.
-         */
+        // Persist stock changes in the same transaction as the idempotency record.
         productRepository.saveAll(productsToUpdate);
 
-        /*
-         * Mark the transaction as COMPLETED.
-         */
-        StockUpdateTransaction transaction =
-                stockUpdateTransactionRepository
-                        .findByOrderId(orderId)
-                        .orElseThrow(() ->
-                                new IllegalStateException(
-                                        "Stock transaction not found for orderId="
-                                                + orderId));
+        StockUpdateTransaction transaction = stockUpdateTransactionRepository
+                .findByOrderId(orderId)
+                .orElseThrow(() -> new IllegalStateException(
+                        "Stock transaction not found for orderId=" + orderId
+                ));
 
         transaction.setStatus(StockUpdateStatus.COMPLETED);
         transaction.setProcessedAt(LocalDateTime.now());
-
         stockUpdateTransactionRepository.save(transaction);
 
-        Cache cache = cacheManager.getCache("products");
+        evictProductCaches(request.getItems());
+    }
 
-        if (cache != null) {
-            for (StockUpdateItem item : request.getItems()) {
-                cache.evict(item.getProductId());
+    // =========================================================
+    // CACHE INVALIDATION AFTER BATCH STOCK UPDATE
+    // =========================================================
+
+    private void evictProductCaches(List<StockUpdateItem> items) {
+
+        Cache productCache = cacheManager.getCache("products");
+        if (productCache != null) {
+            for (StockUpdateItem item : items) {
+                productCache.evict(item.getProductId());
             }
         }
 
+        // All products cache uses the key "all". Clear it so any additional
+        // keys added to the cache later cannot leave stale catalogue data.
         Cache productListCache = cacheManager.getCache("productList");
-
         if (productListCache != null) {
-            productListCache.evict("all");
+            productListCache.clear();
         }
 
-        Cache productCategoryCache =
-                cacheManager.getCache("productCategory");
-
+        Cache productCategoryCache = cacheManager.getCache("productCategory");
         if (productCategoryCache != null) {
             productCategoryCache.clear();
         }
 
-        Cache productSearchCache =
-                cacheManager.getCache("productSearch");
-
+        Cache productSearchCache = cacheManager.getCache("productSearch");
         if (productSearchCache != null) {
             productSearchCache.clear();
         }

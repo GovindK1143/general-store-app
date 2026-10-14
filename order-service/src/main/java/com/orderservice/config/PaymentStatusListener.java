@@ -271,9 +271,7 @@ public class PaymentStatusListener {
         ) {
 
             Optional<Order> orderOptional =
-                    orderRepository.findById(
-                            orderId
-                    );
+                    orderRepository.findByIdForUpdate(orderId);
 
 
             if (orderOptional.isPresent()) {

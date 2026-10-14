@@ -9,6 +9,7 @@ import jakarta.persistence.Table;
 import jakarta.validation.constraints.NotBlank;
 import jakarta.validation.constraints.PositiveOrZero;
 import jakarta.validation.constraints.Size;
+
 import lombok.AllArgsConstructor;
 import lombok.Data;
 import lombok.NoArgsConstructor;
@@ -64,4 +65,13 @@ public class Product {
 
     @Column(nullable = false)
     private Boolean active = true;
+
+    // QuickMart homepage configuration
+
+    @Column(name = "featured", nullable = false)
+    private Boolean featured = false;
+
+    @PositiveOrZero(message = "Featured order cannot be negative")
+    @Column(name = "featured_order", nullable = false)
+    private Integer featuredOrder = 0;
 }

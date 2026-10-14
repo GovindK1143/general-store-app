@@ -48,7 +48,7 @@ public class PaymentStatusDltListener {
         }
 
         Order order = orderRepository
-                .findById(message.getOrderId())
+                .findByIdForUpdate(message.getOrderId())
                 .orElse(null);
 
         if (order == null) {

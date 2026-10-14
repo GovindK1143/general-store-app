@@ -130,4 +130,22 @@ public class OrderController {
                 .map(GrantedAuthority::getAuthority)
                 .anyMatch(role::equals);
     }
+
+    // =========================================================
+// RETRY PAYMENT FOR AN EXISTING ORDER
+// =========================================================
+
+    @PostMapping("/{id}/retry-payment")
+    public ResponseEntity<OrderResponse> retryPayment(
+            @PathVariable Long id,
+            @RequestAttribute(
+                    name = "userId",
+                    required = false
+            ) Long userId) {
+
+        OrderResponse response =
+                orderService.retryPayment(id, userId);
+
+        return ResponseEntity.ok(response);
+    }
 }

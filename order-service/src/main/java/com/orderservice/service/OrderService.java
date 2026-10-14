@@ -25,15 +25,14 @@ import com.orderservice.repository.OrderRepository;
 import com.orderservice.dto.OrderItemResponse;
 import com.orderservice.dto.OrderResponse;
 
-import io.github.resilience4j.circuitbreaker.annotation.CircuitBreaker;
 import lombok.extern.slf4j.Slf4j;
 
 @Service
 @Slf4j
 public class OrderService {
 
-    private static final String PAYMENT_SERVICE_CB =
-            "paymentServiceCB";
+//    private static final String PAYMENT_SERVICE_CB =
+//            "paymentServiceCB";
 
     private static final String ORDER_PENDING =
             "PENDING";
@@ -60,12 +59,16 @@ public class OrderService {
     private PaymentServiceClient paymentServiceClient;
 
     @Autowired
+    private PaymentProcessingService paymentProcessingService;
+
+    @Autowired
     private ProductServiceClient productServiceClient;
 
 
     // =========================================================
     // GET ALL ORDERS
     // =========================================================
+
     @Transactional(readOnly = true)
     public List<OrderResponse> getAllOrders() {
 
@@ -81,6 +84,7 @@ public class OrderService {
     // =========================================================
     // GET USER ORDERS
     // =========================================================
+
     @Cacheable(
             value = "userOrders",
             key = "'user:' + #userId",
@@ -95,10 +99,7 @@ public class OrderService {
             );
         }
 
-        log.info(
-                "Fetching orders for User ID: {}",
-                userId
-        );
+        log.info("Fetching orders for User ID: {}", userId);
 
         return orderRepository
                 .findByUserIdOrderByOrderDateDesc(userId)
@@ -111,6 +112,7 @@ public class OrderService {
     // =========================================================
     // PLACE MULTI-PRODUCT ORDER
     // =========================================================
+
     @CacheEvict(
             value = "userOrders",
             key = "'user:' + #userId"
@@ -121,53 +123,50 @@ public class OrderService {
             Long userId) {
 
         if (userId == null) {
-
             throw new InvalidOrderException(
                     "Authenticated user ID is missing"
             );
         }
 
-        if (request == null ||
-                request.getItems() == null ||
-                request.getItems().isEmpty()) {
+        if (request == null
+                || request.getItems() == null
+                || request.getItems().isEmpty()) {
 
             throw new InvalidOrderException(
                     "Order must contain at least one item"
             );
         }
 
-        log.info(
-                "Creating order. userId={}, itemCount={}",
-                userId,
-                request.getItems().size()
-        );
 
         // ---------------------------------------------------------
-        // Validate duplicate products
+        // VALIDATE ORDER ITEMS AND DUPLICATE PRODUCTS
         // ---------------------------------------------------------
 
         Set<Long> productIds = new HashSet<>();
 
-        for (OrderItemRequest itemRequest :
-                request.getItems()) {
+        for (OrderItemRequest itemRequest : request.getItems()) {
 
             if (itemRequest == null) {
-
                 throw new InvalidOrderException(
                         "Order item is required"
                 );
             }
 
             if (itemRequest.getProductId() == null) {
-
                 throw new InvalidOrderException(
                         "Product ID is required"
                 );
             }
 
-            if (!productIds.add(
-                    itemRequest.getProductId())) {
+            if (itemRequest.getQuantity() == null
+                    || itemRequest.getQuantity() <= 0) {
 
+                throw new InvalidOrderException(
+                        "Quantity must be greater than zero"
+                );
+            }
+
+            if (!productIds.add(itemRequest.getProductId())) {
                 throw new InvalidOrderException(
                         "Duplicate product ID in order: "
                                 + itemRequest.getProductId()
@@ -177,47 +176,85 @@ public class OrderService {
 
 
         // ---------------------------------------------------------
-        // Create Order
+        // CHECK FOR AN EXISTING MATCHING PENDING ORDER
+        // ---------------------------------------------------------
+
+        Order existingPendingOrder =
+                findMatchingPendingOrder(
+                        userId,
+                        request.getItems()
+                );
+
+
+        if (existingPendingOrder != null) {
+
+            // Lock and reload the matching order before retrying.
+            Order lockedExistingOrder = orderRepository
+                    .findByIdAndUserIdForUpdate(
+                            existingPendingOrder.getId(),
+                            userId
+                    )
+                    .orElse(null);
+
+            if (lockedExistingOrder != null) {
+
+                // Recheck the latest status after acquiring the lock.
+                if (ORDER_PENDING.equalsIgnoreCase(
+                        lockedExistingOrder.getOrderStatus())
+                        && PAYMENT_PENDING.equalsIgnoreCase(
+                        lockedExistingOrder.getPaymentStatus())) {
+
+                    log.warn(
+                            "Matching pending order found. Retrying payment " +
+                                    "using the existing order. orderId={}, userId={}",
+                            lockedExistingOrder.getId(),
+                            userId
+                    );
+
+                    return processPaymentAndUpdateOrder(
+                            lockedExistingOrder
+                    );
+                }
+
+                // Another request may have updated the order while we waited.
+                log.info(
+                        "Matching order was updated by another request. " +
+                                "Returning the latest order state. orderId={}",
+                        lockedExistingOrder.getId()
+                );
+
+                return OrderResponse.fromOrder(lockedExistingOrder);
+            }
+        }
+
+        log.info(
+                "Creating order. userId={}, itemCount={}",
+                userId,
+                request.getItems().size()
+        );
+
+
+        // ---------------------------------------------------------
+        // CREATE NEW ORDER
         // ---------------------------------------------------------
 
         Order order = new Order();
 
         order.setUserId(userId);
         order.setOrderDate(LocalDateTime.now());
-
         order.setOrderStatus(ORDER_PENDING);
         order.setPaymentStatus(PAYMENT_PENDING);
         order.setStockUpdated(false);
-
         order.setItems(new ArrayList<>());
-
 
         double totalAmount = 0.0;
 
 
         // ---------------------------------------------------------
-        // Validate every product and create OrderItems
+        // VALIDATE PRODUCTS AND CREATE ORDER ITEMS
         // ---------------------------------------------------------
 
-        for (OrderItemRequest itemRequest :
-                request.getItems()) {
-
-            if (itemRequest == null ||
-                    itemRequest.getProductId() == null) {
-
-                throw new InvalidOrderException(
-                        "Product ID is required"
-                );
-            }
-
-            if (itemRequest.getQuantity() == null ||
-                    itemRequest.getQuantity() <= 0) {
-
-                throw new InvalidOrderException(
-                        "Quantity must be greater than zero"
-                );
-            }
-
+        for (OrderItemRequest itemRequest : request.getItems()) {
 
             log.info(
                     "Validating product. productId={}, quantity={}",
@@ -226,10 +263,7 @@ public class OrderService {
             );
 
 
-            // -----------------------------------------------------
-            // Get product from Product Service
-            // -----------------------------------------------------
-
+            // Fetch the product from Product Service.
             ProductResponse product =
                     productServiceClient.getProductById(
                             itemRequest.getProductId()
@@ -237,7 +271,6 @@ public class OrderService {
 
 
             if (product == null) {
-
                 throw new InvalidOrderException(
                         "Product not found with ID: "
                                 + itemRequest.getProductId()
@@ -245,13 +278,8 @@ public class OrderService {
             }
 
 
-            // -----------------------------------------------------
-            // Validate product
-            // -----------------------------------------------------
-
-            if (!Boolean.TRUE.equals(
-                    product.getActive())) {
-
+            // Validate product availability.
+            if (!Boolean.TRUE.equals(product.getActive())) {
                 throw new InvalidOrderException(
                         "Product is currently unavailable: "
                                 + product.getName()
@@ -259,7 +287,6 @@ public class OrderService {
             }
 
             if (product.getSellingPrice() == null) {
-
                 throw new InvalidOrderException(
                         "Product selling price is not available: "
                                 + product.getName()
@@ -267,16 +294,13 @@ public class OrderService {
             }
 
             if (product.getStock() == null) {
-
                 throw new InvalidOrderException(
                         "Product stock information is not available: "
                                 + product.getName()
                 );
             }
 
-            if (product.getStock() <
-                    itemRequest.getQuantity()) {
-
+            if (product.getStock() < itemRequest.getQuantity()) {
                 throw new InvalidOrderException(
                         "Insufficient stock for product: "
                                 + product.getName()
@@ -286,41 +310,20 @@ public class OrderService {
             }
 
 
-            // -----------------------------------------------------
-            // Calculate item subtotal
-            // -----------------------------------------------------
-
+            // Calculate subtotal.
             double subtotal =
                     product.getSellingPrice()
                             * itemRequest.getQuantity();
 
 
-            // -----------------------------------------------------
-            // Create OrderItem
-            // -----------------------------------------------------
-
+            // Create order item.
             OrderItem orderItem = new OrderItem();
 
-            orderItem.setProductId(
-                    product.getId()
-            );
-
-            orderItem.setProductName(
-                    product.getName()
-            );
-
-            orderItem.setQuantity(
-                    itemRequest.getQuantity()
-            );
-
-            orderItem.setUnitPrice(
-                    product.getSellingPrice()
-            );
-
-            orderItem.setSubtotal(
-                    subtotal
-            );
-
+            orderItem.setProductId(product.getId());
+            orderItem.setProductName(product.getName());
+            orderItem.setQuantity(itemRequest.getQuantity());
+            orderItem.setUnitPrice(product.getSellingPrice());
+            orderItem.setSubtotal(subtotal);
 
             order.addItem(orderItem);
 
@@ -329,19 +332,17 @@ public class OrderService {
 
 
         // ---------------------------------------------------------
-        // Set total amount
+        // SET ORDER TOTAL
         // ---------------------------------------------------------
 
         order.setTotalAmount(totalAmount);
 
 
         // ---------------------------------------------------------
-        // Save Order + OrderItems
+        // SAVE ORDER AND ORDER ITEMS
         // ---------------------------------------------------------
 
-        Order savedOrder =
-                orderRepository.save(order);
-
+        Order savedOrder = orderRepository.save(order);
 
         log.info(
                 "Order created successfully. " +
@@ -353,15 +354,249 @@ public class OrderService {
 
 
         // ---------------------------------------------------------
-        // Process payment
+        // PROCESS PAYMENT
         // ---------------------------------------------------------
+
+        return processPaymentAndUpdateOrder(savedOrder);
+    }
+
+    // =========================================================
+// RETRY PAYMENT FOR AN EXISTING ORDER
+// =========================================================
+
+    @CacheEvict(
+            value = "userOrders",
+            key = "'user:' + #userId"
+    )
+    @Transactional
+    public OrderResponse retryPayment(
+            Long orderId,
+            Long userId) {
+
+        // Validate order ID.
+        if (orderId == null || orderId <= 0) {
+            throw new InvalidOrderException(
+                    "A valid order ID is required"
+            );
+        }
+
+        // Validate authenticated customer.
+        if (userId == null) {
+            throw new InvalidOrderException(
+                    "Authenticated user ID is missing"
+            );
+        }
+
+        // Retrieve and lock the customer's order during payment retry.
+        // This serializes concurrent retries for the same order.
+        Order order = orderRepository
+                .findByIdAndUserIdForUpdate(orderId, userId)
+                .orElseThrow(() ->
+                        new OrderNotFoundException(
+                                "Order not found with ID: " + orderId
+                        )
+                );
+
+        String paymentStatus = order.getPaymentStatus();
+        String orderStatus = order.getOrderStatus();
+
+        // Do not process payment again for an already completed order.
+        if (PAYMENT_SUCCESS.equalsIgnoreCase(paymentStatus)
+                && Boolean.TRUE.equals(order.getStockUpdated())) {
+
+            log.info(
+                    "Order is already completed. Retry not required. orderId={}",
+                    orderId
+            );
+
+            return OrderResponse.fromOrder(order);
+        }
+
+        // Allow retry when payment is pending.
+        boolean pendingOrder =
+                PAYMENT_PENDING.equalsIgnoreCase(paymentStatus)
+                        && ORDER_PENDING.equalsIgnoreCase(orderStatus);
+
+        // Allow retry when the previous payment failed.
+        boolean failedOrder =
+                PAYMENT_FAILED.equalsIgnoreCase(paymentStatus)
+                        && ORDER_CANCELLED.equalsIgnoreCase(orderStatus);
+
+        if (!pendingOrder && !failedOrder) {
+            throw new InvalidOrderException(
+                    "This order is not eligible for payment retry. " +
+                            "Current order status: " + orderStatus +
+                            ", payment status: " + paymentStatus
+            );
+        }
+
+        log.info(
+                "Retrying payment for existing order. orderId={}, userId={}",
+                orderId,
+                userId
+        );
+
+        // Reuse the existing order and payment-processing logic.
+        // Do not create a new order or new order items.
+        return processPaymentAndUpdateOrder(order);
+    }
+
+
+    // =========================================================
+    // AUTOMATIC RECOVERY OF A DUE PENDING PAYMENT
+    // =========================================================
+
+    @CacheEvict(
+            value = "userOrders",
+            allEntries = true
+    )
+    @Transactional
+    public boolean retryPendingPaymentIfDue(
+            Long orderId,
+            LocalDateTime cutoff) {
+
+        if (orderId == null || cutoff == null) {
+            throw new IllegalArgumentException(
+                    "Order ID and retry cutoff are required"
+            );
+        }
+
+        // Lock and reload the latest order state.
+        Order order = orderRepository
+                .findByIdForUpdate(orderId)
+                .orElse(null);
+
+        if (order == null) {
+            log.debug(
+                    "Automatic payment recovery skipped: order not found. " +
+                            "orderId={}",
+                    orderId
+            );
+            return false;
+        }
+
+        // Recheck eligibility after acquiring the database lock.
+        if (!ORDER_PENDING.equalsIgnoreCase(order.getOrderStatus())
+                || !PAYMENT_PENDING.equalsIgnoreCase(
+                order.getPaymentStatus())) {
+
+            log.debug(
+                    "Automatic payment recovery skipped: order is no longer " +
+                            "pending. orderId={}, orderStatus={}, paymentStatus={}",
+                    orderId,
+                    order.getOrderStatus(),
+                    order.getPaymentStatus()
+            );
+
+            return false;
+        }
+
+        LocalDateTime lastAttempt = order.getLastPaymentAttemptAt();
+
+        // Exclude legacy orders and attempts that are not yet due.
+        if (lastAttempt == null || !lastAttempt.isBefore(cutoff)) {
+            return false;
+        }
+
+        log.info(
+                "Starting automatic payment recovery. orderId={}, lastAttempt={}",
+                orderId,
+                lastAttempt
+        );
+
+        // Reuse the existing order and payment-processing path.
+        processPaymentAndUpdateOrder(order);
+
+        return true;
+    }
+
+    // =========================================================
+    // FIND A MATCHING PENDING ORDER
+    // =========================================================
+
+    private Order findMatchingPendingOrder(
+            Long userId,
+            List<OrderItemRequest> requestedItems) {
+
+        // Build a map of product ID -> requested quantity.
+        Map<Long, Integer> requestedQuantities =
+                new HashMap<>();
+
+        for (OrderItemRequest item : requestedItems) {
+            requestedQuantities.put(
+                    item.getProductId(),
+                    item.getQuantity()
+            );
+        }
+
+
+        // Repository results are ordered newest first.
+        List<Order> userOrders =
+                orderRepository
+                        .findByUserIdOrderByOrderDateDesc(userId);
+
+
+        for (Order existingOrder : userOrders) {
+
+            // Only retry orders whose order and payment are pending.
+            if (!ORDER_PENDING.equalsIgnoreCase(
+                    existingOrder.getOrderStatus())) {
+                continue;
+            }
+
+            if (!PAYMENT_PENDING.equalsIgnoreCase(
+                    existingOrder.getPaymentStatus())) {
+                continue;
+            }
+
+            if (existingOrder.getItems() == null
+                    || existingOrder.getItems().isEmpty()) {
+                continue;
+            }
+
+
+            // Build a map of product ID -> previously ordered quantity.
+            Map<Long, Integer> existingQuantities =
+                    new HashMap<>();
+
+            for (OrderItem existingItem :
+                    existingOrder.getItems()) {
+
+                existingQuantities.put(
+                        existingItem.getProductId(),
+                        existingItem.getQuantity()
+                );
+            }
+
+
+            // Match only when both product IDs and quantities are equal.
+            if (existingQuantities.equals(requestedQuantities)) {
+
+                return existingOrder;
+            }
+        }
+
+        return null;
+    }
+
+
+    // =========================================================
+    // PROCESS PAYMENT AND UPDATE ORDER STATUS
+    // =========================================================
+
+    private OrderResponse processPaymentAndUpdateOrder(
+            Order savedOrder) {
+
+        // Record when this payment attempt begins.
+        savedOrder.setLastPaymentAttemptAt(LocalDateTime.now());
+        orderRepository.save(savedOrder);
 
         Map<String, Object> paymentResponse;
 
         try {
 
             paymentResponse =
-                    processPayment(savedOrder);
+                    paymentProcessingService.processPayment(savedOrder);
 
         } catch (Exception exception) {
 
@@ -382,7 +617,7 @@ public class OrderService {
 
 
         // ---------------------------------------------------------
-        // Check payment status
+        // READ PAYMENT STATUS
         // ---------------------------------------------------------
 
         String paymentStatus =
@@ -391,9 +626,11 @@ public class OrderService {
                         "paymentStatus"
                 );
 
+        if (paymentStatus != null) {
+            paymentStatus = paymentStatus.trim();
+        }
 
-        if (paymentStatus == null) {
-
+        if (paymentStatus == null || paymentStatus.isEmpty()) {
             paymentStatus = PAYMENT_PENDING;
         }
 
@@ -402,27 +639,15 @@ public class OrderService {
         // PAYMENT SUCCESS
         // ---------------------------------------------------------
 
-        if (PAYMENT_SUCCESS.equalsIgnoreCase(
-                paymentStatus)) {
+        if (PAYMENT_SUCCESS.equalsIgnoreCase(paymentStatus)) {
 
-            /*
-             * Payment succeeded.
-             *
-             * Stock will be updated by Kafka listener.
-             */
+            savedOrder.setPaymentStatus(PAYMENT_SUCCESS);
 
-            savedOrder.setPaymentStatus(
-                    PAYMENT_SUCCESS
-            );
-
-            savedOrder.setOrderStatus(
-                    ORDER_PENDING
-            );
-
+            // Stock will be updated by the existing Kafka listener.
+            savedOrder.setOrderStatus(ORDER_PENDING);
             savedOrder.setStockUpdated(false);
 
             orderRepository.save(savedOrder);
-
 
             log.info(
                     "Payment successful. Waiting for Kafka " +
@@ -435,25 +660,16 @@ public class OrderService {
             // PAYMENT FAILED
             // ---------------------------------------------------------
 
-        } else if (PAYMENT_FAILED.equalsIgnoreCase(
-                paymentStatus)) {
+        } else if (PAYMENT_FAILED.equalsIgnoreCase(paymentStatus)) {
 
-            savedOrder.setPaymentStatus(
-                    PAYMENT_FAILED
-            );
-
-            savedOrder.setOrderStatus(
-                    ORDER_CANCELLED
-            );
-
+            savedOrder.setPaymentStatus(PAYMENT_FAILED);
+            savedOrder.setOrderStatus(ORDER_CANCELLED);
             savedOrder.setStockUpdated(false);
 
             orderRepository.save(savedOrder);
 
-
             log.warn(
-                    "Payment failed. Order cancelled. " +
-                            "orderId={}",
+                    "Payment failed. Order cancelled. orderId={}",
                     savedOrder.getId()
             );
 
@@ -464,18 +680,11 @@ public class OrderService {
 
         } else {
 
-            savedOrder.setPaymentStatus(
-                    PAYMENT_PENDING
-            );
-
-            savedOrder.setOrderStatus(
-                    ORDER_PENDING
-            );
-
+            savedOrder.setPaymentStatus(PAYMENT_PENDING);
+            savedOrder.setOrderStatus(ORDER_PENDING);
             savedOrder.setStockUpdated(false);
 
             orderRepository.save(savedOrder);
-
 
             log.info(
                     "Payment pending. orderId={}",
@@ -484,104 +693,76 @@ public class OrderService {
         }
 
 
-        return OrderResponse.fromOrder(
-                savedOrder
-        );
+        return OrderResponse.fromOrder(savedOrder);
     }
 
 
-    // =========================================================
-    // PAYMENT SERVICE
-    // =========================================================
-
-    @CircuitBreaker(
-            name = PAYMENT_SERVICE_CB,
-            fallbackMethod = "paymentServiceFallback"
-    )
-    public Map<String, Object> processPayment(
-            Order order) {
-
-        Map<String, Object> paymentRequest =
-                new HashMap<>();
-
-        paymentRequest.put(
-                "orderId",
-                order.getId()
-        );
-
-        paymentRequest.put(
-                "userId",
-                order.getUserId()
-        );
-
-        paymentRequest.put(
-                "amount",
-                order.getTotalAmount()
-        );
-
-
-        log.info(
-                "Calling Payment Service. " +
-                        "orderId={}, amount={}",
-                order.getId(),
-                order.getTotalAmount()
-        );
-
-
-        Map<String, Object> paymentResponse =
-                paymentServiceClient.processPayment(
-                        paymentRequest
-                );
+//    // =========================================================
+//    // PAYMENT SERVICE
+//    // =========================================================
+//
+//    @CircuitBreaker(
+//            name = PAYMENT_SERVICE_CB,
+//            fallbackMethod = "paymentServiceFallback"
+//    )
+//    public Map<String, Object> processPayment(Order order) {
+//
+//        Map<String, Object> paymentRequest =
+//                new HashMap<>();
+//
+//        paymentRequest.put("orderId", order.getId());
+//        paymentRequest.put("userId", order.getUserId());
+//        paymentRequest.put("amount", order.getTotalAmount());
+//
+//        log.info(
+//                "Calling Payment Service. orderId={}, amount={}",
+//                order.getId(),
+//                order.getTotalAmount()
+//        );
+//
+//        Map<String, Object> paymentResponse =
+//                paymentServiceClient.processPayment(
+//                        paymentRequest
+//                );
+//
+//        if (paymentResponse == null) {
+//            throw new RuntimeException(
+//                    "Payment Service returned empty response"
+//            );
+//        }
+//
+//        return paymentResponse;
+//    }
 
 
-        if (paymentResponse == null) {
-
-            throw new RuntimeException(
-                    "Payment Service returned empty response"
-            );
-        }
-
-        return paymentResponse;
-    }
-
-
-    // =========================================================
-    // PAYMENT SERVICE FALLBACK
-    // =========================================================
-
-    public Map<String, Object> paymentServiceFallback(
-            Order order,
-            Exception exception) {
-
-        log.warn(
-                "Payment Service unavailable for orderId={}. " +
-                        "Payment will remain PENDING. Reason: {}",
-                order.getId(),
-                exception.getMessage()
-        );
-
-
-        Map<String, Object> response =
-                new HashMap<>();
-
-        response.put(
-                "orderId",
-                order.getId()
-        );
-
-        response.put(
-                "paymentStatus",
-                PAYMENT_PENDING
-        );
-
-        response.put(
-                "message",
-                "Payment Service is unavailable. " +
-                        "Please retry payment later."
-        );
-
-        return response;
-    }
+//    // =========================================================
+//    // PAYMENT SERVICE FALLBACK
+//    // =========================================================
+//
+//    public Map<String, Object> paymentServiceFallback(
+//            Order order,
+//            Exception exception) {
+//
+//        log.warn(
+//                "Payment Service unavailable for orderId={}. " +
+//                        "Payment will remain PENDING. Reason: {}",
+//                order.getId(),
+//                exception.getMessage()
+//        );
+//
+//        Map<String, Object> response = new HashMap<>();
+//
+//        response.put("orderId", order.getId());
+//        response.put("paymentStatus", PAYMENT_PENDING);
+//
+//        response.put(
+//                "message",
+//                "Payment Service is unavailable. " +
+//                        "Please retry payment later."
+//        );
+//
+//        return response;
+//    }
 
 
     // =========================================================
@@ -595,32 +776,26 @@ public class OrderService {
 
         Order order;
 
-
         if (admin) {
 
-            order =
-                    orderRepository.findById(orderId)
-                            .orElseThrow(() ->
-                                    new OrderNotFoundException(
-                                            "Order not found with ID: "
-                                                    + orderId
-                                    )
-                            );
+            order = orderRepository.findById(orderId)
+                    .orElseThrow(() ->
+                            new OrderNotFoundException(
+                                    "Order not found with ID: "
+                                            + orderId
+                            )
+                    );
 
         } else {
 
-            order =
-                    orderRepository
-                            .findByIdAndUserId(
-                                    orderId,
-                                    userId
+            order = orderRepository
+                    .findByIdAndUserId(orderId, userId)
+                    .orElseThrow(() ->
+                            new OrderNotFoundException(
+                                    "Order not found with ID: "
+                                            + orderId
                             )
-                            .orElseThrow(() ->
-                                    new OrderNotFoundException(
-                                            "Order not found with ID: "
-                                                    + orderId
-                                    )
-                            );
+                    );
         }
 
 
@@ -628,25 +803,21 @@ public class OrderService {
 
         LocalDateTime paymentDate = null;
 
-        String paymentStatus =
-                order.getPaymentStatus();
+        String paymentStatus = order.getPaymentStatus();
 
 
         // ---------------------------------------------------------
-        // Get latest payment information
+        // GET LATEST PAYMENT INFORMATION
         // ---------------------------------------------------------
 
         try {
 
             Map<String, Object> payment =
-                    paymentServiceClient
-                            .getPaymentByOrderId(
-                                    orderId
-                            );
+                    paymentServiceClient.getPaymentByOrderId(
+                            orderId
+                    );
 
-
-            if (payment != null &&
-                    !payment.isEmpty()) {
+            if (payment != null && !payment.isEmpty()) {
 
                 String servicePaymentStatus =
                         getStringValue(
@@ -654,20 +825,15 @@ public class OrderService {
                                 "paymentStatus"
                         );
 
-
                 if (servicePaymentStatus != null) {
-
-                    paymentStatus =
-                            servicePaymentStatus;
+                    paymentStatus = servicePaymentStatus;
                 }
-
 
                 transactionId =
                         getStringValue(
                                 payment,
                                 "transactionId"
                         );
-
 
                 paymentDate =
                         getLocalDateTimeValue(
@@ -746,9 +912,7 @@ public class OrderService {
 
         try {
 
-            return LocalDateTime.parse(
-                    value.toString()
-            );
+            return LocalDateTime.parse(value.toString());
 
         } catch (Exception exception) {
 

@@ -26,6 +26,7 @@ import com.cartservice.model.Cart;
 import com.cartservice.model.CartItem;
 import com.cartservice.repository.CartItemRepository;
 import com.cartservice.repository.CartRepository;
+import com.cartservice.model.CartCheckoutSnapshotItem;
 
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
@@ -42,6 +43,8 @@ public class CartService {
     private final ProductServiceClient productServiceClient;
 
     private final OrderCheckoutService orderCheckoutService;
+
+    private final CartCheckoutSnapshotService cartCheckoutSnapshotService;
 
 
     /*
@@ -324,6 +327,7 @@ public class CartService {
      * This is important because the customer should not lose
      * their cart when checkout fails.
      */
+
     @Transactional
     @CacheEvict(
             value = "carts",
@@ -333,27 +337,43 @@ public class CartService {
 
         validateUserId(userId);
 
+        // Lock the cart while creating the order and recording its snapshot.
         Cart cart = getCartEntity(userId);
 
-        if (cart.getItems() == null ||
-                cart.getItems().isEmpty()) {
-
+        if (cart.getItems() == null || cart.getItems().isEmpty()) {
             throw new CartException(
                     "Cannot checkout an empty cart"
             );
         }
 
+        // Capture the original cart rows BEFORE calling Order Service.
+        // These IDs let us distinguish purchased items from rows
+        // the customer may remove and add again later.
+        List<CartCheckoutSnapshotItem> capturedItems =
+                new ArrayList<>();
+
         List<OrderItemRequest> orderItems =
-                cart.getItems()
-                        .stream()
-                        .map(
-                                item ->
-                                        new OrderItemRequest(
-                                                item.getProductId(),
-                                                item.getQuantity()
-                                        )
-                        )
-                        .toList();
+                new ArrayList<>();
+
+        for (CartItem item : cart.getItems()) {
+
+            OrderItemRequest orderItem =
+                    new OrderItemRequest(
+                            item.getProductId(),
+                            item.getQuantity()
+                    );
+
+            orderItems.add(orderItem);
+
+            CartCheckoutSnapshotItem snapshotItem =
+                    new CartCheckoutSnapshotItem();
+
+            snapshotItem.setCartItemId(item.getId());
+            snapshotItem.setProductId(item.getProductId());
+            snapshotItem.setQuantity(item.getQuantity());
+
+            capturedItems.add(snapshotItem);
+        }
 
         CreateOrderRequest request =
                 new CreateOrderRequest(orderItems);
@@ -365,35 +385,97 @@ public class CartService {
                 orderItems.size()
         );
 
+        // Keep using the existing OrderCheckoutService.
         Map<String, Object> response =
                 orderCheckoutService.placeOrder(request);
 
-        if (response == null ||
-                response.isEmpty()) {
-
+        if (response == null || response.isEmpty()) {
             throw new CartException(
                     "Unable to create order"
             );
         }
 
-        /*
-         * Clear the database cart only after
-         * Order Service successfully accepts the order.
-         */
-        cart.getItems().clear();
+        // OrderResponse exposes the order ID as "orderId".
+        Long orderId = extractOrderId(response.get("orderId"));
 
-        cart.setUpdatedAt(LocalDateTime.now());
+        if (orderId == null) {
+            log.error(
+                    "Order Service returned no valid orderId. " +
+                            "Cart retained. userId={}, response={}",
+                    userId,
+                    response
+            );
 
-        cartRepository.save(cart);
+            throw new CartException(
+                    "Order Service response is missing a valid orderId. " +
+                            "The cart was not cleared."
+            );
+        }
 
-        log.info(
-                "Checkout successful. Cart cleared and Redis cache evicted. userId={}",
-                userId
+        Object paymentStatusValue = response.get("paymentStatus");
+
+        String paymentStatus = paymentStatusValue == null
+                ? "PENDING"
+                : paymentStatusValue.toString().trim();
+
+        boolean paymentSucceeded =
+                "SUCCESS".equalsIgnoreCase(paymentStatus);
+
+        // Store the original purchased quantities and associate them
+        // with this order. This also processes an early SUCCESS event.
+        cartCheckoutSnapshotService.recordCheckoutSnapshot(
+                orderId,
+                userId,
+                capturedItems,
+                paymentSucceeded
         );
+
+        if (paymentSucceeded) {
+
+            log.info(
+                    "Payment succeeded. Checkout snapshot recorded; " +
+                            "purchased cart quantities processed. " +
+                            "userId={}, cartId={}, orderId={}",
+                    userId,
+                    cart.getId(),
+                    orderId
+            );
+
+        } else {
+
+            log.info(
+                    "Cart retained pending payment success. " +
+                            "userId={}, cartId={}, orderId={}, paymentStatus={}",
+                    userId,
+                    cart.getId(),
+                    orderId,
+                    paymentStatus
+            );
+        }
 
         return response;
     }
 
+
+    private Long extractOrderId(Object value) {
+
+        if (value instanceof Number number) {
+            return number.longValue();
+        }
+
+        if (value instanceof String text && !text.isBlank()) {
+            try {
+                return Long.valueOf(text.trim());
+            } catch (NumberFormatException exception) {
+                log.warn(
+                        "Invalid orderId returned by Order Service: {}",
+                        text
+                );
+            }
+        }
+
+        return null;
+    }
 
     /*
      * ============================================================
@@ -403,7 +485,7 @@ public class CartService {
     private Cart getOrCreateCart(Long userId) {
 
         return cartRepository
-                .findByUserId(userId)
+                .findByUserIdForUpdate(userId)
                 .orElseGet(
                         () -> createEmptyCart(userId)
                 );
@@ -439,19 +521,17 @@ public class CartService {
      * GET CART ENTITY
      * ============================================================
      */
+
     private Cart getCartEntity(Long userId) {
 
         return cartRepository
-                .findByUserId(userId)
+                .findByUserIdForUpdate(userId)
                 .orElseThrow(
-                        () ->
-                                new CartNotFoundException(
-                                        "Cart not found for user: "
-                                                + userId
-                                )
+                        () -> new CartNotFoundException(
+                                "Cart not found for user: " + userId
+                        )
                 );
     }
-
 
     /*
      * ============================================================

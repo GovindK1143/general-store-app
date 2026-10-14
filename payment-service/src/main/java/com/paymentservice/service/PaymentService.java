@@ -298,34 +298,44 @@ public class PaymentService {
     // AUTHENTICATED USER VALIDATION
     // =========================================================
 
+
     private void validateAuthenticatedUser(
             Long requestUserId,
             Long authenticatedUserId,
             String role) {
 
-        if (authenticatedUserId == null) {
-
+        // Every payment request must identify its customer.
+        if (requestUserId == null) {
             throw new AccessDeniedException(
-                    "Authenticated user ID is missing"
+                    "Payment request user ID is missing"
             );
         }
 
         /*
-         * ADMIN can process payments for any user.
+         * ADMIN requests may originate from a trusted internal
+         * service token, which does not contain a customer userId.
+         *
+         * Payment Service still validates the JWT signature and
+         * role in JwtAuthFilter before this method is reached.
          */
         if ("ADMIN".equalsIgnoreCase(role)) {
             return;
         }
 
-        /*
-         * CUSTOMER can process only their own payment.
-         */
+        // Non-admin callers must have an authenticated user ID.
+        if (authenticatedUserId == null) {
+            throw new AccessDeniedException(
+                    "Authenticated user ID is missing"
+            );
+        }
+
+        // Customers can process payments only for themselves.
         if ("CUSTOMER".equalsIgnoreCase(role)) {
 
             if (!authenticatedUserId.equals(requestUserId)) {
-
                 throw new AccessDeniedException(
-                        "You are not authorized to process payment for another user"
+                        "You are not authorized to process payment " +
+                                "for another user"
                 );
             }
 
@@ -336,6 +346,7 @@ public class PaymentService {
                 "Unauthorized role"
         );
     }
+
 
 
     // =========================================================

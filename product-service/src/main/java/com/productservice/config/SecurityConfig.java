@@ -27,60 +27,69 @@ public class SecurityConfig {
 
                 .authorizeHttpRequests(auth -> auth
 
-
                         // ==========================================
                         // SWAGGER / OPENAPI
                         // ==========================================
+
                         .requestMatchers(
                                 "/swagger-ui/**",
                                 "/v3/api-docs/**"
                         ).permitAll()
 
                         // ==========================================
-                        // CUSTOMER + ADMIN
+                        // PUBLIC PRODUCT CATALOGUE
+                        // GUEST + CUSTOMER + ADMIN
                         // ==========================================
 
                         .requestMatchers(
                                 HttpMethod.GET,
                                 "/products/all",
+                                "/products/categories",
+                                "/products/featured",
                                 "/products/id/**",
                                 "/products/category/**",
                                 "/products/search"
-                        ).hasAnyRole("CUSTOMER", "ADMIN")
-
-
-                                // ==========================================
-                                // ADMIN ONLY
-                            // ==========================================
-
-                                .requestMatchers(
-                                        HttpMethod.POST,
-                                        "/products/add"
-                                ).hasRole("ADMIN")
-
-                                .requestMatchers(
-                                        HttpMethod.POST,
-                                        "/products/update-stock"
-                                ).hasRole("ADMIN")
-
-                                .requestMatchers(
-                                        HttpMethod.POST,
-                                        "/products/update-stock/batch"
-                                ).hasRole("ADMIN")
-
-                                .requestMatchers(
-                                        HttpMethod.PUT,
-                                        "/products/*"
-                                ).hasRole("ADMIN")
-
-                                .requestMatchers(
-                                        HttpMethod.PATCH,
-                                        "/products/*/status"
-                                ).hasRole("ADMIN")
-
+                        ).permitAll()
 
                         // ==========================================
-                        // EVERYTHING ELSE
+                        // ADMIN ONLY - ADD PRODUCT
+                        // ==========================================
+
+                        .requestMatchers(
+                                HttpMethod.POST,
+                                "/products/add"
+                        ).hasRole("ADMIN")
+
+                        // ==========================================
+                        // ADMIN ONLY - UPDATE STOCK
+                        // ==========================================
+
+                        .requestMatchers(
+                                HttpMethod.POST,
+                                "/products/update-stock",
+                                "/products/update-stock/batch"
+                        ).hasRole("ADMIN")
+
+                        // ==========================================
+                        // ADMIN ONLY - UPDATE PRODUCT
+                        // ==========================================
+
+                        .requestMatchers(
+                                HttpMethod.PUT,
+                                "/products/*"
+                        ).hasRole("ADMIN")
+
+                        // ==========================================
+                        // ADMIN ONLY - ACTIVATE / DEACTIVATE PRODUCT
+                        // ==========================================
+
+                        .requestMatchers(
+                                HttpMethod.PATCH,
+                                "/products/*/status"
+                        ).hasRole("ADMIN")
+
+                        // ==========================================
+                        // EVERYTHING ELSE REQUIRES AUTHENTICATION
                         // ==========================================
 
                         .anyRequest().authenticated()

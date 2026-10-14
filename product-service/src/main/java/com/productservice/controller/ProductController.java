@@ -59,6 +59,30 @@ public class ProductController {
     }
 
     // =========================================================
+    // GET ALL ACTIVE PRODUCT CATEGORIES
+    // =========================================================
+
+    @GetMapping("/categories")
+    public ResponseEntity<List<String>> getActiveCategories() {
+
+        return ResponseEntity.ok(
+                productService.getActiveCategories()
+        );
+    }
+
+    // =========================================================
+    // GET FEATURED PRODUCTS FOR QUICKMART HOMEPAGE
+    // =========================================================
+
+    @GetMapping("/featured")
+    public ResponseEntity<List<Product>> getFeaturedProducts() {
+
+        return ResponseEntity.ok(
+                productService.getFeaturedProducts()
+        );
+    }
+
+    // =========================================================
     // GET PRODUCTS BY CATEGORY
     // =========================================================
 
@@ -127,7 +151,7 @@ public class ProductController {
     @PutMapping("/{productId}")
     public ResponseEntity<Product> updateProduct(
             @PathVariable Long productId,
-            @RequestBody Product product) {
+            @Valid @RequestBody Product product) {
 
         return ResponseEntity.ok(
                 productService.updateProduct(productId, product)
