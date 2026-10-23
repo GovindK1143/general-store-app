@@ -32,6 +32,39 @@ public class Order {
     @Column(name = "user_id", nullable = false)
     private Long userId;
 
+    // Saved delivery address ID at the time the order was created.
+    // This is an ID from User Service, not a cross-service foreign key.
+    @Column(name = "delivery_address_id")
+    private Long deliveryAddressId;
+
+    // Address snapshot: preserve the original delivery destination.
+    @Column(name = "delivery_address_label", length = 30)
+    private String deliveryAddressLabel;
+
+    @Column(name = "delivery_recipient_name", length = 100)
+    private String deliveryRecipientName;
+
+    @Column(name = "delivery_mobile", length = 10)
+    private String deliveryMobile;
+
+    @Column(name = "delivery_house_flat", length = 100)
+    private String deliveryHouseFlat;
+
+    @Column(name = "delivery_street_area", length = 150)
+    private String deliveryStreetArea;
+
+    @Column(name = "delivery_city", length = 100)
+    private String deliveryCity;
+
+    @Column(name = "delivery_state", length = 100)
+    private String deliveryState;
+
+    @Column(name = "delivery_pincode", length = 6)
+    private String deliveryPincode;
+
+    @Column(name = "delivery_landmark", length = 150)
+    private String deliveryLandmark;
+
     /*
      * One Order can contain multiple OrderItems.
      */

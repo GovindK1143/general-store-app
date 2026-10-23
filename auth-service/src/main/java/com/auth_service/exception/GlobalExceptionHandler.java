@@ -8,6 +8,7 @@ import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.MethodArgumentNotValidException;
 import org.springframework.web.bind.annotation.ExceptionHandler;
 import org.springframework.web.bind.annotation.RestControllerAdvice;
+import org.springframework.web.server.ResponseStatusException;
 
 @RestControllerAdvice
 public class GlobalExceptionHandler {
@@ -35,7 +36,10 @@ public class GlobalExceptionHandler {
         exception.getBindingResult()
                 .getFieldErrors()
                 .forEach(error ->
-                        errors.put(error.getField(), error.getDefaultMessage())
+                        errors.put(
+                                error.getField(),
+                                error.getDefaultMessage()
+                        )
                 );
 
         Map<String, Object> response = new HashMap<>();
@@ -49,6 +53,27 @@ public class GlobalExceptionHandler {
                 .body(response);
     }
 
+    // Preserve the original HTTP status and message from AuthService.
+    @ExceptionHandler(ResponseStatusException.class)
+    public ResponseEntity<Map<String, Object>> handleResponseStatusException(
+            ResponseStatusException exception) {
+
+        Map<String, Object> response = new HashMap<>();
+
+        response.put("success", false);
+        response.put(
+                "message",
+                exception.getReason() != null
+                        ? exception.getReason()
+                        : "Request failed"
+        );
+
+        return ResponseEntity
+                .status(exception.getStatusCode())
+                .body(response);
+    }
+
+    // Keep this generic handler for unexpected errors.
     @ExceptionHandler(Exception.class)
     public ResponseEntity<Map<String, Object>> handleGeneralException(
             Exception exception) {

@@ -333,130 +333,138 @@ public class CartService {
             value = "carts",
             key = "'user:' + #userId"
     )
-    public Object checkout(Long userId) {
+    public Object checkout(Long userId, Long addressId) {
+        {
 
-        validateUserId(userId);
+            validateUserId(userId);
 
-        // Lock the cart while creating the order and recording its snapshot.
-        Cart cart = getCartEntity(userId);
+            if (addressId == null || addressId <= 0) {
+                throw new CartException(
+                        "A valid delivery address ID is required"
+                );
+            }
 
-        if (cart.getItems() == null || cart.getItems().isEmpty()) {
-            throw new CartException(
-                    "Cannot checkout an empty cart"
-            );
-        }
+            // Lock the cart while creating the order and recording its snapshot.
+            Cart cart = getCartEntity(userId);
 
-        // Capture the original cart rows BEFORE calling Order Service.
-        // These IDs let us distinguish purchased items from rows
-        // the customer may remove and add again later.
-        List<CartCheckoutSnapshotItem> capturedItems =
-                new ArrayList<>();
+            if (cart.getItems() == null || cart.getItems().isEmpty()) {
+                throw new CartException(
+                        "Cannot checkout an empty cart"
+                );
+            }
 
-        List<OrderItemRequest> orderItems =
-                new ArrayList<>();
+            // Capture the original cart rows BEFORE calling Order Service.
+            // These IDs let us distinguish purchased items from rows
+            // the customer may remove and add again later.
+            List<CartCheckoutSnapshotItem> capturedItems =
+                    new ArrayList<>();
 
-        for (CartItem item : cart.getItems()) {
+            List<OrderItemRequest> orderItems =
+                    new ArrayList<>();
 
-            OrderItemRequest orderItem =
-                    new OrderItemRequest(
-                            item.getProductId(),
-                            item.getQuantity()
-                    );
+            for (CartItem item : cart.getItems()) {
 
-            orderItems.add(orderItem);
+                OrderItemRequest orderItem =
+                        new OrderItemRequest(
+                                item.getProductId(),
+                                item.getQuantity()
+                        );
 
-            CartCheckoutSnapshotItem snapshotItem =
-                    new CartCheckoutSnapshotItem();
+                orderItems.add(orderItem);
 
-            snapshotItem.setCartItemId(item.getId());
-            snapshotItem.setProductId(item.getProductId());
-            snapshotItem.setQuantity(item.getQuantity());
+                CartCheckoutSnapshotItem snapshotItem =
+                        new CartCheckoutSnapshotItem();
 
-            capturedItems.add(snapshotItem);
-        }
+                snapshotItem.setCartItemId(item.getId());
+                snapshotItem.setProductId(item.getProductId());
+                snapshotItem.setQuantity(item.getQuantity());
 
-        CreateOrderRequest request =
-                new CreateOrderRequest(orderItems);
+                capturedItems.add(snapshotItem);
+            }
 
-        log.info(
-                "Checking out cart. userId={}, cartId={}, itemCount={}",
-                userId,
-                cart.getId(),
-                orderItems.size()
-        );
-
-        // Keep using the existing OrderCheckoutService.
-        Map<String, Object> response =
-                orderCheckoutService.placeOrder(request);
-
-        if (response == null || response.isEmpty()) {
-            throw new CartException(
-                    "Unable to create order"
-            );
-        }
-
-        // OrderResponse exposes the order ID as "orderId".
-        Long orderId = extractOrderId(response.get("orderId"));
-
-        if (orderId == null) {
-            log.error(
-                    "Order Service returned no valid orderId. " +
-                            "Cart retained. userId={}, response={}",
-                    userId,
-                    response
-            );
-
-            throw new CartException(
-                    "Order Service response is missing a valid orderId. " +
-                            "The cart was not cleared."
-            );
-        }
-
-        Object paymentStatusValue = response.get("paymentStatus");
-
-        String paymentStatus = paymentStatusValue == null
-                ? "PENDING"
-                : paymentStatusValue.toString().trim();
-
-        boolean paymentSucceeded =
-                "SUCCESS".equalsIgnoreCase(paymentStatus);
-
-        // Store the original purchased quantities and associate them
-        // with this order. This also processes an early SUCCESS event.
-        cartCheckoutSnapshotService.recordCheckoutSnapshot(
-                orderId,
-                userId,
-                capturedItems,
-                paymentSucceeded
-        );
-
-        if (paymentSucceeded) {
+            CreateOrderRequest request =
+                    new CreateOrderRequest(addressId, orderItems);
 
             log.info(
-                    "Payment succeeded. Checkout snapshot recorded; " +
-                            "purchased cart quantities processed. " +
-                            "userId={}, cartId={}, orderId={}",
+                    "Checking out cart. userId={}, cartId={}, itemCount={}, addressId={}",
                     userId,
                     cart.getId(),
-                    orderId
+                    orderItems.size(),
+                    addressId
             );
 
-        } else {
+            // Keep using the existing OrderCheckoutService.
+            Map<String, Object> response =
+                    orderCheckoutService.placeOrder(request);
 
-            log.info(
-                    "Cart retained pending payment success. " +
-                            "userId={}, cartId={}, orderId={}, paymentStatus={}",
-                    userId,
-                    cart.getId(),
+            if (response == null || response.isEmpty()) {
+                throw new CartException(
+                        "Unable to create order"
+                );
+            }
+
+            // OrderResponse exposes the order ID as "orderId".
+            Long orderId = extractOrderId(response.get("orderId"));
+
+            if (orderId == null) {
+                log.error(
+                        "Order Service returned no valid orderId. " +
+                                "Cart retained. userId={}, response={}",
+                        userId,
+                        response
+                );
+
+                throw new CartException(
+                        "Order Service response is missing a valid orderId. " +
+                                "The cart was not cleared."
+                );
+            }
+
+            Object paymentStatusValue = response.get("paymentStatus");
+
+            String paymentStatus = paymentStatusValue == null
+                    ? "PENDING"
+                    : paymentStatusValue.toString().trim();
+
+            boolean paymentSucceeded =
+                    "SUCCESS".equalsIgnoreCase(paymentStatus);
+
+            // Store the original purchased quantities and associate them
+            // with this order. This also processes an early SUCCESS event.
+            cartCheckoutSnapshotService.recordCheckoutSnapshot(
                     orderId,
-                    paymentStatus
+                    userId,
+                    capturedItems,
+                    paymentSucceeded
             );
+
+            if (paymentSucceeded) {
+
+                log.info(
+                        "Payment succeeded. Checkout snapshot recorded; " +
+                                "purchased cart quantities processed. " +
+                                "userId={}, cartId={}, orderId={}",
+                        userId,
+                        cart.getId(),
+                        orderId
+                );
+
+            } else {
+
+                log.info(
+                        "Cart retained pending payment success. " +
+                                "userId={}, cartId={}, orderId={}, paymentStatus={}",
+                        userId,
+                        cart.getId(),
+                        orderId,
+                        paymentStatus
+                );
+            }
+
+            return response;
         }
 
-        return response;
     }
-
-
     private Long extractOrderId(Object value) {
 
         if (value instanceof Number number) {

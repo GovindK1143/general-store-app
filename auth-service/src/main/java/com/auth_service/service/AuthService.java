@@ -6,7 +6,12 @@ import org.springframework.cache.annotation.Cacheable;
 import org.springframework.security.crypto.password.PasswordEncoder;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
+import org.springframework.cache.annotation.CacheEvict;
+import org.springframework.cache.annotation.Caching;
+import org.springframework.http.HttpStatus;
+import org.springframework.web.server.ResponseStatusException;
 
+import com.auth_service.login.ChangePasswordRequest;
 import com.auth_service.exception.DuplicateUserException;
 import com.auth_service.login.RegisterRequest;
 import com.auth_service.model.Role;
@@ -66,6 +71,14 @@ public class AuthService {
         // Never allow customer registration
         // to select the role.
         user.setRole(Role.CUSTOMER);
+
+        String address = request.getAddress();
+
+        user.setAddress(
+                address == null || address.isBlank()
+                        ? null
+                        : address.trim()
+        );
 
         return userRepository.save(user);
     }
@@ -134,4 +147,68 @@ public class AuthService {
 
         return user;
     }
+
+    @Transactional
+    @Caching(evict = {
+            @CacheEvict(
+                    value = "authUsersByEmail",
+                    allEntries = true
+            ),
+            @CacheEvict(
+                    value = "authUsersByMobile",
+                    allEntries = true
+            )
+    })
+    public void changePassword(
+            String email,
+            ChangePasswordRequest request) {
+
+        if (email == null || email.isBlank()) {
+            throw new ResponseStatusException(
+                    HttpStatus.UNAUTHORIZED,
+                    "Authenticated user is required"
+            );
+        }
+
+        String normalizedEmail = email.trim().toLowerCase();
+
+        User user = userRepository
+                .findByEmailIgnoreCase(normalizedEmail)
+                .orElseThrow(() ->
+                        new ResponseStatusException(
+                                HttpStatus.NOT_FOUND,
+                                "Customer account not found"
+                        )
+                );
+
+        // Verify the current password against the stored hash.
+        if (!passwordEncoder.matches(
+                request.currentPassword(),
+                user.getPassword())) {
+
+            throw new ResponseStatusException(
+                    HttpStatus.BAD_REQUEST,
+                    "Current password is incorrect"
+            );
+        }
+
+        // Prevent an unchanged password from being submitted.
+        if (passwordEncoder.matches(
+                request.newPassword(),
+                user.getPassword())) {
+
+            throw new ResponseStatusException(
+                    HttpStatus.BAD_REQUEST,
+                    "New password must be different from your current password"
+            );
+        }
+
+        // Store only the encoded password, never the raw password.
+        user.setPassword(
+                passwordEncoder.encode(request.newPassword())
+        );
+
+        userRepository.save(user);
+    }
+
 }

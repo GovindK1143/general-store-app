@@ -14,6 +14,15 @@ import org.springframework.cache.annotation.CacheEvict;
 import org.springframework.cache.annotation.Cacheable;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
+import java.util.Objects;
+
+import feign.FeignException;
+
+import org.springframework.http.HttpStatus;
+import org.springframework.web.server.ResponseStatusException;
+
+import com.orderservice.client.UserServiceClient;
+import com.orderservice.dto.CustomerAddressResponse;
 
 import com.orderservice.client.PaymentServiceClient;
 import com.orderservice.client.ProductServiceClient;
@@ -64,6 +73,9 @@ public class OrderService {
     @Autowired
     private ProductServiceClient productServiceClient;
 
+    @Autowired
+    private UserServiceClient userServiceClient;
+
 
     // =========================================================
     // GET ALL ORDERS
@@ -106,6 +118,69 @@ public class OrderService {
                 .stream()
                 .map(OrderResponse::fromOrder)
                 .toList();
+    }
+
+    private CustomerAddressResponse getSelectedAddress(Long addressId) {
+
+        if (addressId == null || addressId <= 0) {
+            throw new InvalidOrderException(
+                    "A valid delivery address ID is required"
+            );
+        }
+
+        final List<CustomerAddressResponse> addresses;
+
+        try {
+            addresses = userServiceClient.getMyAddresses();
+
+        } catch (FeignException exception) {
+
+            log.error(
+                    "Unable to validate delivery address through User Service. "
+                            + "addressId={}, status={}",
+                    addressId,
+                    exception.status()
+            );
+
+            if (exception.status() == 401) {
+                throw new ResponseStatusException(
+                        HttpStatus.UNAUTHORIZED,
+                        "Unable to authenticate with User Service",
+                        exception
+                );
+            }
+
+            if (exception.status() == 403) {
+                throw new ResponseStatusException(
+                        HttpStatus.FORBIDDEN,
+                        "Access denied while validating delivery address",
+                        exception
+                );
+            }
+
+            throw new ResponseStatusException(
+                    HttpStatus.SERVICE_UNAVAILABLE,
+                    "Unable to validate the delivery address. Please try again.",
+                    exception
+            );
+        }
+
+        if (addresses == null) {
+            throw new ResponseStatusException(
+                    HttpStatus.SERVICE_UNAVAILABLE,
+                    "User Service returned no address information"
+            );
+        }
+
+        return addresses.stream()
+                .filter(address ->
+                        address != null && addressId.equals(address.id())
+                )
+                .findFirst()
+                .orElseThrow(() -> new InvalidOrderException(
+                        "The selected delivery address does not belong to "
+                                + "your account or no longer exists"
+                ));
     }
 
 
@@ -174,6 +249,11 @@ public class OrderService {
             }
         }
 
+        // Validate that the selected address belongs to the
+        // authenticated customer through User Service.
+        CustomerAddressResponse selectedAddress =
+                getSelectedAddress(request.getAddressId());
+
 
         // ---------------------------------------------------------
         // CHECK FOR AN EXISTING MATCHING PENDING ORDER
@@ -182,7 +262,8 @@ public class OrderService {
         Order existingPendingOrder =
                 findMatchingPendingOrder(
                         userId,
-                        request.getItems()
+                        request.getItems(),
+                        selectedAddress.id()
                 );
 
 
@@ -241,6 +322,18 @@ public class OrderService {
         Order order = new Order();
 
         order.setUserId(userId);
+        // Preserve delivery details independently of the saved
+        // address, which the customer may edit later.
+        order.setDeliveryAddressId(selectedAddress.id());
+        order.setDeliveryAddressLabel(selectedAddress.label());
+        order.setDeliveryRecipientName(selectedAddress.recipientName());
+        order.setDeliveryMobile(selectedAddress.mobile());
+        order.setDeliveryHouseFlat(selectedAddress.houseFlat());
+        order.setDeliveryStreetArea(selectedAddress.streetArea());
+        order.setDeliveryCity(selectedAddress.city());
+        order.setDeliveryState(selectedAddress.state());
+        order.setDeliveryPincode(selectedAddress.pincode());
+        order.setDeliveryLandmark(selectedAddress.landmark());
         order.setOrderDate(LocalDateTime.now());
         order.setOrderStatus(ORDER_PENDING);
         order.setPaymentStatus(PAYMENT_PENDING);
@@ -516,7 +609,8 @@ public class OrderService {
 
     private Order findMatchingPendingOrder(
             Long userId,
-            List<OrderItemRequest> requestedItems) {
+            List<OrderItemRequest> requestedItems,
+            Long requestedAddressId) {
 
         // Build a map of product ID -> requested quantity.
         Map<Long, Integer> requestedQuantities =
@@ -546,6 +640,14 @@ public class OrderService {
 
             if (!PAYMENT_PENDING.equalsIgnoreCase(
                     existingOrder.getPaymentStatus())) {
+                continue;
+            }
+
+            // Do not reuse an existing pending order if the
+            // customer selected another delivery address.
+            if (!Objects.equals(
+                    existingOrder.getDeliveryAddressId(),
+                    requestedAddressId)) {
                 continue;
             }
 
@@ -695,75 +797,6 @@ public class OrderService {
 
         return OrderResponse.fromOrder(savedOrder);
     }
-
-
-//    // =========================================================
-//    // PAYMENT SERVICE
-//    // =========================================================
-//
-//    @CircuitBreaker(
-//            name = PAYMENT_SERVICE_CB,
-//            fallbackMethod = "paymentServiceFallback"
-//    )
-//    public Map<String, Object> processPayment(Order order) {
-//
-//        Map<String, Object> paymentRequest =
-//                new HashMap<>();
-//
-//        paymentRequest.put("orderId", order.getId());
-//        paymentRequest.put("userId", order.getUserId());
-//        paymentRequest.put("amount", order.getTotalAmount());
-//
-//        log.info(
-//                "Calling Payment Service. orderId={}, amount={}",
-//                order.getId(),
-//                order.getTotalAmount()
-//        );
-//
-//        Map<String, Object> paymentResponse =
-//                paymentServiceClient.processPayment(
-//                        paymentRequest
-//                );
-//
-//        if (paymentResponse == null) {
-//            throw new RuntimeException(
-//                    "Payment Service returned empty response"
-//            );
-//        }
-//
-//        return paymentResponse;
-//    }
-
-
-//    // =========================================================
-//    // PAYMENT SERVICE FALLBACK
-//    // =========================================================
-//
-//    public Map<String, Object> paymentServiceFallback(
-//            Order order,
-//            Exception exception) {
-//
-//        log.warn(
-//                "Payment Service unavailable for orderId={}. " +
-//                        "Payment will remain PENDING. Reason: {}",
-//                order.getId(),
-//                exception.getMessage()
-//        );
-//
-//        Map<String, Object> response = new HashMap<>();
-//
-//        response.put("orderId", order.getId());
-//        response.put("paymentStatus", PAYMENT_PENDING);
-//
-//        response.put(
-//                "message",
-//                "Payment Service is unavailable. " +
-//                        "Please retry payment later."
-//        );
-//
-//        return response;
-//    }
-
 
     // =========================================================
     // GET ORDER STATUS

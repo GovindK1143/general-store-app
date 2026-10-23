@@ -28,6 +28,10 @@ public class SecurityConfig {
                                 "/swagger-ui/**",
                                 "/v3/api-docs/**"
                         ).permitAll()
+                        .requestMatchers(
+                                "/users/me/addresses",
+                                "/users/me/addresses/**"
+                        ).hasRole("CUSTOMER")
                         .anyRequest().authenticated()
                 )
                 .sessionManagement(session ->

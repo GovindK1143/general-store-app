@@ -8,7 +8,9 @@ import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.*;
 import org.springframework.security.core.Authentication;
+import org.springframework.security.authentication.AnonymousAuthenticationToken;
 
+import com.auth_service.login.ChangePasswordRequest;
 import com.auth_service.login.LoginRequest;
 import com.auth_service.login.RegisterRequest;
 import com.auth_service.login.OtpRequest;
@@ -133,6 +135,39 @@ public class AuthController {
 
         return ResponseEntity.ok(
                 createLoginResponse(user)
+        );
+    }
+
+
+    @PostMapping("/change-password")
+    public ResponseEntity<?> changePassword(
+            @Valid @RequestBody ChangePasswordRequest request,
+            Authentication authentication) {
+
+        // Explicitly require a real authenticated session, even if
+        // other /auth endpoints are configured as permitAll.
+        if (authentication == null
+                || !authentication.isAuthenticated()
+                || authentication instanceof AnonymousAuthenticationToken) {
+
+            return ResponseEntity
+                    .status(HttpStatus.UNAUTHORIZED)
+                    .body(Map.of(
+                            "success", false,
+                            "message", "Please sign in to change your password"
+                    ));
+        }
+
+        authService.changePassword(
+                authentication.getName(),
+                request
+        );
+
+        return ResponseEntity.ok(
+                Map.of(
+                        "success", true,
+                        "message", "Password changed successfully"
+                )
         );
     }
 

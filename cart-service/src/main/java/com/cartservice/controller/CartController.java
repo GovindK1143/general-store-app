@@ -4,6 +4,8 @@ import com.cartservice.dto.AddCartItemRequest;
 import com.cartservice.dto.CartResponse;
 import com.cartservice.dto.UpdateCartItemRequest;
 import com.cartservice.service.CartService;
+import com.cartservice.dto.CheckoutRequest;
+
 import jakarta.validation.Valid;
 import lombok.RequiredArgsConstructor;
 import org.springframework.http.ResponseEntity;
@@ -95,13 +97,16 @@ public class CartController {
 
     @PostMapping("/checkout")
     public ResponseEntity<?> checkout(
+            @Valid @RequestBody CheckoutRequest request,
             Authentication authentication) {
 
-        Long userId =
-                getUserId(authentication);
+        Long userId = getUserId(authentication);
 
         return ResponseEntity.ok(
-                cartService.checkout(userId)
+                cartService.checkout(
+                        userId,
+                        request.getAddressId()
+                )
         );
     }
 
