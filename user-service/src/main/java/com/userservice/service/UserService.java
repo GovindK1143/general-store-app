@@ -6,7 +6,9 @@ import org.springframework.cache.annotation.Caching;
 import org.springframework.cache.annotation.Cacheable;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
+import java.util.List;
 
+import com.userservice.dto.AdminCustomerResponse;
 import com.userservice.dto.UpdateMyProfileRequest;
 import com.userservice.model.User;
 import com.userservice.repository.UserRepository;
@@ -47,5 +49,19 @@ public class UserService {
         user.setName(request.name().trim());
 
         return userRepository.save(user);
+    }
+
+    // =========================================================
+    // ADMIN: GET ALL CUSTOMERS
+    // =========================================================
+
+    public List<AdminCustomerResponse> getAllCustomersForAdmin() {
+        return userRepository.findAll()
+                .stream()
+                .filter(user ->
+                        "CUSTOMER".equalsIgnoreCase(user.getRole())
+                )
+                .map(AdminCustomerResponse::from)
+                .toList();
     }
 }

@@ -10,11 +10,13 @@ import org.springframework.web.bind.annotation.PutMapping;
 import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RestController;
+import java.util.List;
 
 import com.userservice.dto.UpdateMyProfileRequest;
 import com.userservice.dto.UserProfileResponse;
 import com.userservice.model.User;
 import com.userservice.service.UserService;
+import com.userservice.dto.AdminCustomerResponse;
 
 @RestController
 @RequestMapping("/users")
@@ -40,6 +42,17 @@ public class UserController {
 
         return ResponseEntity.ok(
                 UserProfileResponse.from(user)
+        );
+    }
+
+    // =========================================================
+    // ADMIN: GET ALL CUSTOMERS
+    // =========================================================
+
+    @GetMapping("/admin/customers")
+    public ResponseEntity<List<AdminCustomerResponse>> getAllCustomersForAdmin() {
+        return ResponseEntity.ok(
+                userService.getAllCustomersForAdmin()
         );
     }
 
