@@ -1,5 +1,6 @@
 package com.paymentservice.repository;
 
+import java.util.List;
 import java.util.Optional;
 
 import org.springframework.data.jpa.repository.JpaRepository;
@@ -8,10 +9,12 @@ import org.springframework.stereotype.Repository;
 import com.paymentservice.model.Payment;
 
 @Repository
-public interface PaymentRepository
-        extends JpaRepository<Payment, Long> {
+public interface PaymentRepository extends JpaRepository<Payment, Long> {
 
     Optional<Payment> findByOrderId(Long orderId);
 
     boolean existsByOrderId(Long orderId);
+
+    // Admin: most recent payments first
+    List<Payment> findAllByOrderByPaymentDateDescIdDesc();
 }

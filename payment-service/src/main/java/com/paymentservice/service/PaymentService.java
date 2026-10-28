@@ -15,6 +15,8 @@ import org.springframework.stereotype.Service;
 
 import java.time.LocalDateTime;
 import java.util.UUID;
+import java.util.List;
+import com.paymentservice.dto.AdminPaymentSummary;
 
 @Service
 public class PaymentService {
@@ -454,5 +456,54 @@ public class PaymentService {
                         .replace("-", "")
                         .substring(0, 16)
                         .toUpperCase();
+    }
+
+    // =========================================================
+// ADMIN: GET ALL PAYMENTS
+// =========================================================
+
+    public List<Payment> getAllPaymentsForAdmin() {
+        return paymentRepository.findAllByOrderByPaymentDateDescIdDesc();
+    }
+
+// =========================================================
+// ADMIN: PAYMENT SUMMARY
+// =========================================================
+
+    public AdminPaymentSummary getAdminPaymentSummary() {
+
+        List<Payment> payments =
+                paymentRepository.findAll();
+
+        long successful = payments.stream()
+                .filter(p -> "SUCCESS".equalsIgnoreCase(
+                        p.getPaymentStatus()))
+                .count();
+
+        long pending = payments.stream()
+                .filter(p -> "PENDING".equalsIgnoreCase(
+                        p.getPaymentStatus()))
+                .count();
+
+        long failed = payments.stream()
+                .filter(p -> "FAILED".equalsIgnoreCase(
+                        p.getPaymentStatus()))
+                .count();
+
+        double successfulRevenue = payments.stream()
+                .filter(p -> "SUCCESS".equalsIgnoreCase(
+                        p.getPaymentStatus()))
+                .mapToDouble(p -> p.getAmount() == null
+                        ? 0.0
+                        : p.getAmount())
+                .sum();
+
+        return new AdminPaymentSummary(
+                payments.size(),
+                successful,
+                pending,
+                failed,
+                successfulRevenue
+        );
     }
 }

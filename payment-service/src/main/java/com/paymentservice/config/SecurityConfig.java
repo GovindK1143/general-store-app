@@ -66,6 +66,12 @@ public class SecurityConfig {
                                 "/payments/status/**"
                         )
                         .hasAnyRole("CUSTOMER", "ADMIN")
+                        // ADMIN ONLY: payment management
+                        .requestMatchers(
+                                HttpMethod.GET,
+                                "/payments/admin/**"
+                        )
+                        .hasRole("ADMIN")
 
                         .anyRequest()
                         .authenticated()

@@ -8,6 +8,9 @@ import jakarta.validation.Valid;
 import lombok.RequiredArgsConstructor;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.*;
+import java.util.List;
+import com.paymentservice.dto.AdminPaymentSummary;
+import com.paymentservice.model.Payment;
 
 @RestController
 @RequestMapping("/payments")
@@ -82,6 +85,30 @@ public class PaymentController {
                         authenticatedUserId,
                         role
                 )
+        );
+    }
+
+    // =========================================================
+    // ADMIN: GET ALL PAYMENTS
+    // GET /payments/admin/all
+    // =========================================================
+
+    @GetMapping("/admin/all")
+    public ResponseEntity<List<Payment>> getAllPaymentsForAdmin() {
+        return ResponseEntity.ok(
+                paymentService.getAllPaymentsForAdmin()
+        );
+    }
+
+    // =========================================================
+    // ADMIN: PAYMENT SUMMARY
+    // GET /payments/admin/summary
+    // =========================================================
+
+    @GetMapping("/admin/summary")
+    public ResponseEntity<AdminPaymentSummary> getAdminPaymentSummary() {
+        return ResponseEntity.ok(
+                paymentService.getAdminPaymentSummary()
         );
     }
 }
