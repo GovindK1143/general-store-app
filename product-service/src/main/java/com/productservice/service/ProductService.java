@@ -14,6 +14,10 @@ import org.springframework.cache.annotation.Cacheable;
 import org.springframework.cache.annotation.Caching;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
+import java.util.Locale;
+
+import jakarta.validation.ConstraintViolation;
+import jakarta.validation.Validator;
 
 import com.productservice.dto.StockUpdateBatchRequest;
 import com.productservice.dto.StockUpdateItem;
@@ -36,6 +40,9 @@ public class ProductService {
 
     @Autowired
     private CacheManager cacheManager;
+
+    @Autowired
+    private Validator validator;
 
     // =========================================================
     // ADD PRODUCT
@@ -71,12 +78,117 @@ public class ProductService {
     }
 
     // =========================================================
+// BULK ADD PRODUCTS - ADMIN
+// All rows are validated before saving any product.
+// =========================================================
+
+    @Transactional
+    @Caching(evict = {
+            @CacheEvict(value = "productList", allEntries = true),
+            @CacheEvict(value = "productCategory", allEntries = true),
+            @CacheEvict(value = "productSearch", allEntries = true)
+    })
+    public List<Product> addProductsBulk(List<Product> products) {
+
+        if (products == null || products.isEmpty()) {
+            throw new IllegalArgumentException(
+                    "At least one product is required"
+            );
+        }
+
+        if (products.size() > 500) {
+            throw new IllegalArgumentException(
+                    "A maximum of 500 products can be imported per request"
+            );
+        }
+
+        Set<String> productKeys = new HashSet<>();
+
+        // Validate the complete batch before calling saveAll().
+        for (int index = 0; index < products.size(); index++) {
+
+            Product product = products.get(index);
+            int csvRow = index + 2; // Header is row 1.
+
+            if (product == null) {
+                throw new IllegalArgumentException(
+                        "CSV row " + csvRow + ": product cannot be empty"
+                );
+            }
+
+            // Always generate a new database ID.
+            product.setId(null);
+
+            if (product.getStock() == null) {
+                product.setStock(0);
+            }
+
+            if (product.getActive() == null) {
+                product.setActive(true);
+            }
+
+            if (product.getFeatured() == null) {
+                product.setFeatured(false);
+            }
+
+            if (product.getFeaturedOrder() == null) {
+                product.setFeaturedOrder(0);
+            }
+
+            Set<ConstraintViolation<Product>> violations =
+                    validator.validate(product);
+
+            if (!violations.isEmpty()) {
+                throw new IllegalArgumentException(
+                        "CSV row " + csvRow + ": "
+                                + violations.iterator().next().getMessage()
+                );
+            }
+
+            try {
+                validateProduct(product);
+            } catch (IllegalArgumentException exception) {
+                throw new IllegalArgumentException(
+                        "CSV row " + csvRow + ": " + exception.getMessage(),
+                        exception
+                );
+            }
+
+            String duplicateKey =
+                    normalizeProductKey(product.getName()) + "|" +
+                            normalizeProductKey(product.getBrand()) + "|" +
+                            normalizeProductKey(product.getCategory());
+
+            if (!productKeys.add(duplicateKey)) {
+                throw new IllegalArgumentException(
+                        "CSV row " + csvRow
+                                + ": duplicate product name, brand and category "
+                                + "within this upload"
+                );
+            }
+        }
+
+        return productRepository.saveAll(products);
+    }
+
+    private String normalizeProductKey(String value) {
+        return value == null
+                ? ""
+                : value.trim().toLowerCase(Locale.ROOT);
+    }
+
+    // =========================================================
     // GET ALL ACTIVE PRODUCTS
     // =========================================================
 
     @Cacheable(value = "productList", key = "'all'")
     public List<Product> getAllProducts() {
         return productRepository.findByActiveTrue();
+    }
+
+    // ADMIN: Return active and inactive products.
+    public List<Product> getAllProductsForAdmin() {
+        return productRepository.findAll();
     }
 
     // =========================================================

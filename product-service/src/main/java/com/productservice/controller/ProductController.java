@@ -6,6 +6,7 @@ import java.util.Map;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.*;
+import org.springframework.http.HttpStatus;
 
 import com.productservice.dto.StockUpdateBatchRequest;
 import com.productservice.model.Product;
@@ -34,6 +35,22 @@ public class ProductController {
     }
 
     // =========================================================
+    // BULK ADD PRODUCTS - ADMIN ONLY
+    // =========================================================
+
+    @PostMapping("/add/bulk")
+    public ResponseEntity<List<Product>> addProductsBulk(
+            @RequestBody List<Product> products) {
+
+        List<Product> savedProducts =
+                productService.addProductsBulk(products);
+
+        return ResponseEntity
+                .status(HttpStatus.CREATED)
+                .body(savedProducts);
+    }
+
+    // =========================================================
     // GET PRODUCT BY ID
     // =========================================================
 
@@ -55,6 +72,14 @@ public class ProductController {
 
         return ResponseEntity.ok(
                 productService.getAllProducts()
+        );
+    }
+
+    // ADMIN ONLY: GET ALL PRODUCTS INCLUDING INACTIVE
+    @GetMapping("/admin/all")
+    public ResponseEntity<List<Product>> getAllProductsForAdmin() {
+        return ResponseEntity.ok(
+                productService.getAllProductsForAdmin()
         );
     }
 

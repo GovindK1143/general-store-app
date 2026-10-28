@@ -51,6 +51,17 @@ public class SecurityConfig {
                                 "/products/search"
                         ).permitAll()
 
+                        // ADMIN ONLY - VIEW ALL PRODUCTS, INCLUDING INACTIVE
+                        .requestMatchers(
+                                HttpMethod.GET,
+                                "/products/admin/all"
+                        ).hasRole("ADMIN")
+
+                        .requestMatchers(
+                                HttpMethod.POST,
+                                "/products/add/bulk"
+                        ).hasRole("ADMIN")
+
                         // ==========================================
                         // ADMIN ONLY - ADD PRODUCT
                         // ==========================================
