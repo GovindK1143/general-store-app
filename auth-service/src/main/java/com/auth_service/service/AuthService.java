@@ -17,6 +17,7 @@ import com.auth_service.login.RegisterRequest;
 import com.auth_service.model.Role;
 import com.auth_service.model.User;
 import com.auth_service.repository.UserRepository;
+import com.auth_service.login.StoreStaffRegisterRequest;
 
 @Service
 public class AuthService {
@@ -210,5 +211,76 @@ public class AuthService {
 
         userRepository.save(user);
     }
+
+
+    @Transactional
+    public User registerStoreStaff(StoreStaffRegisterRequest request) {
+
+        Role role = request.getRole();
+
+        // Only store staff roles are allowed.
+        if (role != Role.STORE_MANAGER &&
+                role != Role.STORE_EMPLOYEE) {
+
+            throw new ResponseStatusException(
+                    HttpStatus.BAD_REQUEST,
+                    "Only STORE_MANAGER and STORE_EMPLOYEE roles are permitted"
+            );
+        }
+
+        String email = request.getEmail()
+                .trim()
+                .toLowerCase();
+
+        String mobile = request.getMobile()
+                .trim();
+
+        if (userRepository.existsByEmailIgnoreCase(email)) {
+            throw new DuplicateUserException(
+                    "Email is already registered"
+            );
+        }
+
+        if (userRepository.existsByMobile(mobile)) {
+            throw new DuplicateUserException(
+                    "Mobile number is already registered"
+            );
+        }
+
+        User user = new User();
+
+        user.setName(request.getName().trim());
+        user.setEmail(email);
+        user.setMobile(mobile);
+
+        user.setPassword(
+                passwordEncoder.encode(request.getPassword())
+        );
+
+        user.setRole(role);
+
+        String address = request.getAddress();
+
+        user.setAddress(
+                address == null || address.isBlank()
+                        ? null
+                        : address.trim()
+        );
+
+        return userRepository.save(user);
+    }
+
+    @Transactional(readOnly = true)
+    public User getUserByIdForAdmin(Long userId) {
+
+        return userRepository.findById(userId)
+                .orElseThrow(() ->
+                        new ResponseStatusException(
+                                HttpStatus.NOT_FOUND,
+                                "User account not found: " + userId
+                        )
+                );
+    }
+
 
 }

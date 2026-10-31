@@ -44,7 +44,9 @@ public class SecurityConfig {
                         ).permitAll()
 
                         .requestMatchers(
-                                "/auth/register-admin"
+                                "/auth/register-admin",
+                                "/auth/register-store-staff",
+                                "/auth/admin/users/**"
                         ).hasRole("ADMIN")
 
                         .anyRequest()

@@ -9,6 +9,7 @@ import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.*;
 import org.springframework.security.core.Authentication;
 import org.springframework.security.authentication.AnonymousAuthenticationToken;
+import org.springframework.security.access.prepost.PreAuthorize;
 
 import com.auth_service.login.ChangePasswordRequest;
 import com.auth_service.login.LoginRequest;
@@ -21,6 +22,7 @@ import com.auth_service.response.UserResponse;
 import com.auth_service.security.JwtUtil;
 import com.auth_service.service.AuthService;
 import com.auth_service.service.OtpService;
+import com.auth_service.login.StoreStaffRegisterRequest;
 
 @RestController
 @RequestMapping("/auth")
@@ -185,4 +187,30 @@ public class AuthController {
                 user.getRole().name()
         );
     }
+
+
+    @PostMapping("/register-store-staff")
+    @PreAuthorize("hasRole('ADMIN')")
+    public ResponseEntity<UserResponse> registerStoreStaff(
+            @Valid @RequestBody StoreStaffRegisterRequest request) {
+
+        User user = authService.registerStoreStaff(request);
+
+        return ResponseEntity
+                .status(HttpStatus.CREATED)
+                .body(UserResponse.from(user));
+    }
+
+    @GetMapping("/admin/users/{userId}")
+    @PreAuthorize("hasRole('ADMIN')")
+    public ResponseEntity<UserResponse> getUserByIdForAdmin(
+            @PathVariable Long userId) {
+
+        User user = authService.getUserByIdForAdmin(userId);
+
+        return ResponseEntity.ok(
+                UserResponse.from(user)
+        );
+    }
+
 }

@@ -80,6 +80,15 @@ spring:
           predicates:
             - Path=/cart/**
 
+        # =========================
+        # STORE SERVICE
+        # =========================
+
+        - id: store-service
+          uri: lb://STORE-SERVICE
+          predicates:
+            - Path=/stores/**
+
 eureka:
   instance:
     prefer-ip-address: true

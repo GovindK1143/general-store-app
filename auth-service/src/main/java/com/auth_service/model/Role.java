@@ -2,5 +2,7 @@ package com.auth_service.model;
 
 public enum Role {
     ADMIN,
-    CUSTOMER
+    CUSTOMER,
+    STORE_MANAGER,
+    STORE_EMPLOYEE
 }
