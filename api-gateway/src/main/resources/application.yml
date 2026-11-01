@@ -89,6 +89,14 @@ spring:
           predicates:
             - Path=/stores/**
 
+        # =========================
+        # INVENTORY SERVICE
+        # =========================
+        - id: inventory-service
+          uri: lb://INVENTORY-SERVICE
+          predicates:
+            - Path=/inventory/**
+
 eureka:
   instance:
     prefer-ip-address: true

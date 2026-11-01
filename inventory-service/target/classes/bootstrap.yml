@@ -1,0 +1,13 @@
+spring:
+  application:
+    name: inventory-service
+
+  cloud:
+    config:
+      uri: http://localhost:8888
+      fail-fast: true
+      profile: default
+
+logging:
+  level:
+    org.springframework.cloud.config: DEBUG
